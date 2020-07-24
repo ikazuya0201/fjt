@@ -10,7 +10,14 @@ edition = "2018"
 cortex-m = "0.6.3"
 cortex-m-rt = "0.6.12"
 panic_rtt = "0.2.0"
+nb = "1.0.0"
 
 [dependencies.components]
 git = "https://github.com/ikazuya0201/mouse_components.git"
 branch = "develop/v0.2"
+
+[dependencies.quantities]
+git = "https://github.com/ikazuya0201/quantities.git"
+
+[dependencies.embedded-hal]
+version = "1.0.0-alpha.1"
