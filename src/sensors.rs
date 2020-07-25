@@ -1,3 +1,5 @@
+mod encoder;
 mod imu;
 
-use imu::ICM20648;
+pub use encoder::MA702GQ;
+pub use imu::ICM20648;
