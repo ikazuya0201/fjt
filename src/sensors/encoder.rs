@@ -1,5 +1,5 @@
 use components::sensors::{Encoder, EncoderError};
-use embedded_hal::qei::Qei;
+use embedded_hal::Qei;
 use quantities::{Angle, Distance};
 
 pub struct MA702GQ<Q>
@@ -35,10 +35,9 @@ impl<Q> Encoder for MA702GQ<Q>
 where
     Q: Qei,
     Q::Count: Into<u32>,
-    nb::Error<EncoderError>: From<<Q as Qei>::Error>,
 {
     fn get_relative_distance(&mut self) -> nb::Result<Distance, EncoderError> {
-        let after_count = self.get_lower_bits(self.qei.try_count()?.into());
+        let after_count = self.get_lower_bits(self.qei.count().into());
         let relative_count = if after_count > self.before_count {
             (after_count - self.before_count) as i16
         } else {

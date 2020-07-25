@@ -1,8 +1,7 @@
 use core::cell::RefCell;
 
 use components::sensors::Motor;
-use embedded_hal::pwm::PwmPin;
-use nb::block;
+use embedded_hal::PwmPin;
 use quantities::{Quantity, Voltage};
 
 pub struct VoltmeterError;
@@ -42,8 +41,6 @@ where
     P1: PwmPin<Duty = u16>,
     P2: PwmPin<Duty = u16>,
     V: Voltmeter,
-    <P1 as PwmPin>::Error: core::fmt::Debug,
-    <P2 as PwmPin>::Error: core::fmt::Debug,
 {
     fn apply(&mut self, voltage: Voltage) {
         let battery_voltage = self.battery_voltmeter.borrow_mut().get_voltage();
@@ -53,26 +50,16 @@ where
                 ratio = 1.0;
             }
             self.pwm_pin1
-                .try_set_duty(
-                    ((1.0 - ratio) * self.pwm_pin1.try_get_max_duty().unwrap() as f32) as u16,
-                )
-                .ok();
-            self.pwm_pin2
-                .try_set_duty(self.pwm_pin2.try_get_max_duty().unwrap())
-                .ok();
+                .set_duty(((1.0 - ratio) * self.pwm_pin1.get_max_duty() as f32) as u16);
+            self.pwm_pin2.set_duty(self.pwm_pin2.get_max_duty());
         } else {
             let mut ratio = -(voltage / battery_voltage);
             if ratio > 1.0 {
                 ratio = 1.0;
             }
-            self.pwm_pin1
-                .try_set_duty(self.pwm_pin1.try_get_max_duty().unwrap())
-                .ok();
+            self.pwm_pin1.set_duty(self.pwm_pin1.get_max_duty());
             self.pwm_pin2
-                .try_set_duty(
-                    ((1.0 - ratio) * self.pwm_pin2.try_get_max_duty().unwrap() as f32) as u16,
-                )
-                .ok();
+                .set_duty(((1.0 - ratio) * self.pwm_pin2.get_max_duty() as f32) as u16);
         }
     }
 }

@@ -3,7 +3,7 @@ use components::{
     utils::vector::Vector3,
 };
 use embedded_hal::{
-    blocking::delay::DelayMs, blocking::spi::Transfer, digital::OutputPin, timer::CountDown,
+    blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
 use nb::block;
 use quantities::{Acceleration, AngularSpeed};
@@ -73,7 +73,7 @@ where
     {
         wait_ok!(self.write_to_register(Self::RA_PWR_MGMT_1, 0x80)); //reset icm20648
 
-        delay.try_delay_ms(10).ok(); //wait while reset
+        delay.delay_ms(10); //wait while reset
 
         wait_ok!(block!(self.check_who_am_i())); //wait for who am i checking
 
@@ -111,7 +111,7 @@ where
             gyro_offset_sums[0] += gyros.x;
             gyro_offset_sums[1] += gyros.y;
             gyro_offset_sums[2] += gyros.z;
-            block!(timer.try_wait()).ok();
+            block!(timer.wait()).ok();
         }
         for i in 0..3 {
             self.accel_offsets[i] += accel_offset_sums[i] / Self::CALIBRATION_NUM as f32;
@@ -131,12 +131,12 @@ where
     }
 
     fn assert(&mut self) -> Result<(), IMUError> {
-        self.cs.try_set_low()?;
+        self.cs.set_low()?;
         Ok(())
     }
 
     fn deassert(&mut self) -> Result<(), IMUError> {
-        self.cs.try_set_high()?;
+        self.cs.set_high()?;
         Ok(())
     }
 
@@ -148,7 +148,7 @@ where
     }
 
     fn _write_to_register(&mut self, address: u8, data: u8) -> Result<(), IMUError> {
-        self.spi.try_transfer(&mut [address, data])?;
+        self.spi.transfer(&mut [address, data])?;
         Ok(())
     }
 
@@ -170,7 +170,7 @@ where
         buffer: &'w mut [u8],
     ) -> Result<&'w [u8], IMUError> {
         buffer[0] = address | 0x80;
-        let buffer = self.spi.try_transfer(buffer)?;
+        let buffer = self.spi.transfer(buffer)?;
         Ok(&buffer[1..])
     }
 
