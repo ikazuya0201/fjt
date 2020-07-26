@@ -1,7 +1,4 @@
-use components::{
-    sensors::{IMUError, IMU},
-    utils::vector::Vector3,
-};
+use components::{sensors::IMU, utils::vector::Vector3};
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
@@ -9,6 +6,9 @@ use nb::block;
 use quantities::{Acceleration, AngularSpeed};
 
 use crate::wait_ok;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IMUError;
 
 pub struct ICM20648<T, U> {
     spi: T,
@@ -242,31 +242,33 @@ where
     U: OutputPin,
     IMUError: From<<T as Transfer<u8>>::Error> + From<<U as OutputPin>::Error>,
 {
-    fn get_angular_speed_x(&mut self) -> nb::Result<AngularSpeed, IMUError> {
+    type Error = IMUError;
+
+    fn get_angular_speed_x(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
         self.get_angular_speed(Axis::X)
     }
 
-    fn get_angular_speed_y(&mut self) -> nb::Result<AngularSpeed, IMUError> {
+    fn get_angular_speed_y(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
         self.get_angular_speed(Axis::Y)
     }
 
-    fn get_angular_speed_z(&mut self) -> nb::Result<AngularSpeed, IMUError> {
+    fn get_angular_speed_z(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
         self.get_angular_speed(Axis::Z)
     }
 
-    fn get_acceleration_x(&mut self) -> nb::Result<Acceleration, IMUError> {
+    fn get_acceleration_x(&mut self) -> nb::Result<Acceleration, Self::Error> {
         self.get_acceleration(Axis::X)
     }
 
-    fn get_acceleration_y(&mut self) -> nb::Result<Acceleration, IMUError> {
+    fn get_acceleration_y(&mut self) -> nb::Result<Acceleration, Self::Error> {
         self.get_acceleration(Axis::Y)
     }
 
-    fn get_acceleration_z(&mut self) -> nb::Result<Acceleration, IMUError> {
+    fn get_acceleration_z(&mut self) -> nb::Result<Acceleration, Self::Error> {
         self.get_acceleration(Axis::Z)
     }
 
-    fn get_angular_speeds(&mut self) -> nb::Result<Vector3<AngularSpeed>, IMUError> {
+    fn get_angular_speeds(&mut self) -> nb::Result<Vector3<AngularSpeed>, Self::Error> {
         let mut buffer = [0; 7];
         let buffer = self.read_from_registers(Self::RA_GYRO_X_OUT_H, &mut buffer)?;
         Ok(Vector3 {
@@ -279,7 +281,7 @@ where
         })
     }
 
-    fn get_accelerations(&mut self) -> nb::Result<Vector3<Acceleration>, IMUError> {
+    fn get_accelerations(&mut self) -> nb::Result<Vector3<Acceleration>, Self::Error> {
         let mut buffer = [0; 7];
         let buffer = self.read_from_registers(Self::RA_ACCEL_X_OUT_H, &mut buffer)?;
         Ok(Vector3 {
