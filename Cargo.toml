@@ -19,7 +19,7 @@ features = ["stm32f413"]
 
 [dependencies.components]
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "develop/v0.2"
+branch = "modify/158-low-speed-control"
 features = ["debug"]
 
 [dependencies.quantities]

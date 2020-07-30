@@ -11,7 +11,7 @@ use crate::wait_ok;
 pub struct IMUError;
 
 pub struct ICM20648<T, U> {
-    spi: T,
+    pub spi: T,
     cs: U,
     accel_offsets: [Acceleration; 3],
     gyro_offsets: [AngularSpeed; 3],
