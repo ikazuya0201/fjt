@@ -257,11 +257,11 @@ where
     }
 
     fn get_acceleration_x(&mut self) -> nb::Result<Acceleration, Self::Error> {
-        self.get_acceleration(Axis::X)
+        Ok(-self.get_acceleration(Axis::X)?)
     }
 
     fn get_acceleration_y(&mut self) -> nb::Result<Acceleration, Self::Error> {
-        self.get_acceleration(Axis::Y)
+        Ok(-self.get_acceleration(Axis::Y)?)
     }
 
     fn get_acceleration_z(&mut self) -> nb::Result<Acceleration, Self::Error> {

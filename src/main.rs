@@ -11,16 +11,17 @@ use core::fmt::Write;
 
 use components::{
     agent::{pose::Pose, StateEstimator, Tracker},
-    controller::ControllerBuilder,
+    controller::{Controller, ControllerBuilder},
     estimator::EstimatorBuilder,
     maze::RelativeDirection,
-    sensors::IMU,
-    tracker::{Motor, TrackerBuilder},
+    sensors::{Encoder, IMU},
+    tracker::{Controller as _Controller, Motor, State, TrackerBuilder},
     trajectory_generator::{SubTarget, Target, TrajectoryGeneratorBuilder},
     utils::vector::Vector2,
 };
 use cortex_m_rt::entry;
 use embedded_hal::prelude::*;
+use heapless::{consts::*, Vec};
 use jlink_rtt::Output;
 use nb::block;
 use quantities::{
@@ -74,6 +75,8 @@ fn main() -> ! {
     let gpioh = device_peripherals.GPIOH.split();
 
     delay.delay_ms(3000u16);
+
+    let mut out = Output::new();
 
     let wheel_radius = Distance::from_meters(0.0065);
 
@@ -133,7 +136,6 @@ fn main() -> ! {
         .period(period)
         .cut_off_frequency(Frequency::from_hertz(50.0))
         .initial_posture(Angle::from_degree(90.0))
-        // .wheel_interval(Distance::from_meters(0.0335))
         .build();
 
     let voltmeter = {
@@ -167,22 +169,27 @@ fn main() -> ! {
                 IMotor::new(pwm4, pwm3, &voltmeter),
             )
         };
-        let trans_controller = ControllerBuilder::new()
+
+        let mut trans_controller: Controller<Distance> = ControllerBuilder::new()
             .kp(0.7)
             .ki(0.05)
-            .kd(0.05)
+            .kd(0.01)
             .period(period)
+            // .model_gain(2.0)
+            // .model_time_constant(Time::from_seconds(0.3694))
             .model_gain(1000.0)
-            .model_time_constant(Time::from_seconds(0.001))
+            .model_time_constant(Time::from_seconds(0.1))
             .build();
 
-        let rot_controller = ControllerBuilder::new()
+        let mut rot_controller: Controller<Angle> = ControllerBuilder::new()
             .kp(0.2)
             .ki(0.1)
             .kd(0.0)
             .period(period)
+            // .model_gain(20.0)
+            // .model_time_constant(Time::from_seconds(0.1499))
             .model_gain(1000.0)
-            .model_time_constant(Time::from_seconds(0.001))
+            .model_time_constant(Time::from_seconds(0.1))
             .build();
 
         TrackerBuilder::new()
@@ -196,93 +203,49 @@ fn main() -> ! {
             .valid_control_lower_bound(Speed::from_meter_per_second(0.005))
             .translation_controller(trans_controller)
             .rotation_controller(rot_controller)
-            .kanayama_kx(1.0)
-            .kanayama_ky(1.0)
-            .kanayama_ktheta(5.0)
+            .kanayama_kx(2.0)
+            .kanayama_ky(2.0)
+            .kanayama_ktheta(30.0)
             .build()
     };
-
-    let mut out = Output::new();
 
     let mut flag = false;
 
     use core::f32::consts::PI;
 
-    let search_speed = Speed::from_meter_per_second(0.15);
+    let search_speed = Speed::from_meter_per_second(0.3);
 
     let trajectory_generator = TrajectoryGeneratorBuilder::new()
         .period(period)
         .max_speed(Speed::from_meter_per_second(2.0))
         .max_acceleration(Acceleration::from_meter_per_second_squared(1.0))
-        .max_jerk(Jerk::from_meter_per_second_cubed(0.5))
+        .max_jerk(Jerk::from_meter_per_second_cubed(2.0))
         .search_speed(search_speed)
         .slalom_speed_ref(Speed::from_meter_per_second(0.24159))
         // .slalom_speed_ref(Speed::from_meter_per_second(0.5))
         .angular_speed_ref(AngularSpeed::from_radian_per_second(3.0 * PI))
         .angular_acceleration_ref(AngularAcceleration::from_radian_per_second_squared(
-            36.0 * PI,
+            12.0 * PI,
         ))
         .angular_jerk_ref(AngularJerk::from_radian_per_second_cubed(1200.0 * PI))
         .build();
 
-    let stop_trajectory = core::iter::repeat(Target {
-        x: SubTarget {
-            x: Distance::from_meters(-0.14),
-            ..Default::default()
-        },
-        y: SubTarget {
-            x: Distance::from_meters(0.14),
-            ..Default::default()
-        },
-        theta: SubTarget {
-            x: Angle::from_radian(180.0),
-            v: AngularSpeed::from_radian_per_second(0.0),
-            a: AngularAcceleration::from_radian_per_second_squared(0.0),
-            j: AngularJerk::from_radian_per_second_cubed(0.0),
-        },
-    });
-    // let stop_trajectory = Trajectory::Move(Vector2 {
-    //     x: Target {
-    //         x: Distance::from_meters(0.0),
-    //         v: Speed::from_meter_per_second(0.0),
-    //         a: Acceleration::from_meter_per_second_squared(0.0),
-    //         j: Jerk::from_meter_per_second_cubed(0.0),
-    //     },
-    //     y: Target {
-    //         x: Distance::from_meters(0.1),
-    //         v: Speed::from_meter_per_second(0.0),
-    //         a: Acceleration::from_meter_per_second_squared(0.0),
-    //         j: Jerk::from_meter_per_second_cubed(0.0),
-    //     },
-    // });
-
-    // let mut trajectory = trajectory_generator
-    //     .generate_straight(
-    //         Distance::from_meters(0.0),
-    //         Distance::from_meters(0.0),
-    //         Distance::from_meters(0.0),
-    //         Distance::from_meters(0.1),
-    //         Speed::from_meter_per_second(0.0),
-    //         search_speed,
-    //     )
-    //     // .chain(stop_trajectory);
-    //     .chain(trajectory_generator.generate_search_trajectory(
-    //         Pose {
-    //             x: Distance::from_meters(0.0),
-    //             y: Distance::from_meters(0.1),
-    //             theta: Angle::from_degree(90.0),
-    //         },
-    //         RelativeDirection::Left,
-    //     ))
-    //     .chain(trajectory_generator.generate_straight(
-    //         Distance::from_meters(-0.04),
-    //         Distance::from_meters(0.14),
-    //         Distance::from_meters(-0.14),
-    //         Distance::from_meters(0.14),
-    //         search_speed,
-    //         Speed::from_meter_per_second(0.0),
-    //     ))
-    //     .chain(stop_trajectory);
+    let generate_stop = |x: Distance, y: Distance, theta: Angle| {
+        core::iter::repeat(Target {
+            x: SubTarget {
+                x,
+                ..Default::default()
+            },
+            y: SubTarget {
+                x: y,
+                ..Default::default()
+            },
+            theta: SubTarget {
+                x: theta,
+                ..Default::default()
+            },
+        })
+    };
     let mut trajectory = trajectory_generator
         .generate_straight(
             Distance::from_meters(0.0),
@@ -298,49 +261,112 @@ fn main() -> ! {
                 y: Distance::from_meters(0.1),
                 theta: Angle::from_degree(90.0),
             },
-            RelativeDirection::Back,
+            RelativeDirection::Left,
         ))
         .chain(trajectory_generator.generate_straight(
-            Distance::from_meters(0.0),
-            Distance::from_meters(0.1),
-            Distance::from_meters(0.0),
-            Distance::from_meters(0.0),
+            Distance::from_meters(-0.06),
+            Distance::from_meters(0.16),
+            Distance::from_meters(-0.12),
+            Distance::from_meters(0.16),
             search_speed,
             Default::default(),
+        ))
+        .chain(generate_stop(
+            Distance::from_meters(-0.12),
+            Distance::from_meters(0.16),
+            Angle::from_degree(180.0),
         ));
+    // let mut trajectory = trajectory_generator
+    //     .generate_spin(Angle::from_degree(90.0), Angle::from_degree(-180.0))
+    //     .chain(generate_stop(
+    //         Default::default(),
+    //         Default::default(),
+    //         Angle::from_degree(-90.0),
+    //     ));
+    // let mut trajectory = generate_stop(
+    //     Default::default(),
+    //     Default::default(),
+    //     Angle::from_degree(90.0),
+    // );
 
-    let mut count = 0;
+    // let mut data = Vec::<(f32, f32, f32, f32), U4096>::new();
+    let mut theta = Vec::<(f32, f32), U4096>::new();
+    // writeln!(out, "{}", core::mem::size_of::<Vec<State, U4096>>());
+    let mut count = 0u16;
     loop {
         let state = estimator.estimate();
-        // let target = Trajectory::Move(Vector2 {
-        //     x: Target {
-        //         x: Distance::from_meters(0.0),
-        //         v: Speed::from_meter_per_second(0.0),
-        //         a: Acceleration::from_meter_per_second_squared(0.0),
-        //         j: Jerk::from_meter_per_second_cubed(0.0),
-        //     },
-        //     y: Target {
-        //         x: Distance::from_meters(0.0),
-        //         v: Speed::from_meter_per_second(0.0),
-        //         a: Acceleration::from_meter_per_second_squared(0.0),
-        //         j: Jerk::from_meter_per_second_cubed(0.0),
-        //     },
-        // });
-        // let target = Trajectory::Spin(Target {
-        //     x: Angle::from_radian(0.0),
-        //     v: AngularSpeed::from_radian_per_second(0.0),
-        //     a: AngularAcceleration::from_radian_per_second_squared(0.0),
-        //     j: AngularJerk::from_radian_per_second_cubed(0.0),
-        // });
         if let Some(target) = trajectory.next() {
-            tracker.track(state, target);
-        }
-        // count += 1;
+            tracker.track(state.clone(), target.clone());
+            // let sin_th = state.theta.x.sin();
+            // let cos_th = state.theta.x.cos();
+            // let v = state.x.v * cos_th + state.y.v * sin_th;
+            // let a = state.x.a * cos_th + state.y.a * sin_th;
+
+            // let trans_vol =
+            //     trans_controller.calculate(Default::default(), Default::default(), v, a);
+            // let rot_vol = rot_controller.calculate(
+            //     target.theta.v,
+            //     target.theta.a,
+            //     state.theta.v,
+            //     state.theta.a,
+            // );
+
+            // let left_vol = trans_vol - rot_vol;
+            // let right_vol = trans_vol + rot_vol;
+
+            // left_motor.apply(left_vol);
+            // right_motor.apply(right_vol);
+            // if data
+            //     .push((
+            //         target.x.x.as_meters(),
+            //         target.y.x.as_meters(),
+            //         state.x.x.as_meters(),
+            //         state.y.x.as_meters(),
+            //     ))
+            //     .is_err()
+            // {
+            //     break;
+            // }
+            if theta
+                .push((
+                    target.theta.x.as_degree(),
+                    target.theta.v.as_degree_per_second(),
+                ))
+                .is_err()
+            {
+                break;
+            }
+
         // if count == 1000 {
-        //     writeln!(out, "{:?}", state).unwrap();
-        //     // writeln!(out, "{:?}", imu.get_acceleration_y());
+        //     writeln!(
+        //         out,
+        //         "theta: {:?}, omega: {:?}",
+        //         state.theta.x.as_degree(),
+        //         state.theta.v.as_degree_per_second(),
+        //     );
         //     count = 0;
         // }
+        } else {
+            break;
+        }
+        // count += 1;
+        block!(timer.wait()).ok();
+    }
+    // left_motor.apply(Default::default());
+    // right_motor.apply(Default::default());
+    tracker.stop();
+
+    let mut count = 0u16;
+    loop {
+        if count == 10000 {
+            // for &(tx, ty, sx, sy) in &data {
+            //     writeln!(out, "{}, {}, {}, {}", tx, ty, sx, sy);
+            // }
+            for &(theta, omega) in &theta {
+                writeln!(out, "{}, {}", theta, omega);
+            }
+        }
+        count += 1;
         block!(timer.wait()).ok();
     }
 }

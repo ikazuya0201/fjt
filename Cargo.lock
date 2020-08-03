@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "components"
 version = "0.2.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/158-low-speed-control#db58704da4d8c9f904844e35d17def035678ed16"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/158-low-speed-control#c29f28ee03e58392cee36c3c9c8ef8f1791446ca"
 dependencies = [
  "auto_enums",
  "generic-array 0.13.2",
@@ -187,7 +187,9 @@ dependencies = [
  "cortex-m 0.6.3",
  "cortex-m-rt",
  "embedded-hal",
+ "heapless",
  "jlink_rtt",
+ "libm",
  "nb 1.0.0",
  "panic_rtt",
  "quantities",

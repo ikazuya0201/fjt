@@ -12,6 +12,8 @@ cortex-m-rt = "0.6.12"
 panic_rtt = "0.2.0"
 nb = "1.0.0"
 jlink_rtt = "0.1.0"
+heapless = "0.5.3"
+libm = "0.2.1"
 
 [dependencies.stm32f4xx-hal]
 version = "0.8.3"

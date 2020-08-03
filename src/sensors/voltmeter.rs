@@ -24,9 +24,10 @@ where
     PIN: Channel<ADC>,
     <T as OneShot<ADC, u16, PIN>>::Error: core::fmt::Debug,
 {
-    const RATIO: f32 = 1.85;
+    const RATIO: f32 = 3.0;
     const AVDD_VOLTAGE: Voltage = Voltage::from_volts(3.3);
     const MAX_ADC_VALUE: f32 = 4096.0;
+    const SUM_NUM: u16 = 100;
 
     pub fn new(adc: T, adc_pin: PIN, period: Time, cut_off_frequency: Frequency) -> Self {
         let alpha = 1.0 / (2.0 * core::f32::consts::PI * period * cut_off_frequency + 1.0);
@@ -38,7 +39,11 @@ where
             _adc_marker: PhantomData,
         };
 
-        voltmeter.voltage = voltmeter.get_current_voltage();
+        let mut sum = Voltage::default();
+        for i in 0..Self::SUM_NUM {
+            sum += voltmeter.get_current_voltage();
+        }
+        voltmeter.voltage = sum / Self::SUM_NUM as f32;
         voltmeter
     }
 
