@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "components"
 version = "0.2.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/158-low-speed-control#c29f28ee03e58392cee36c3c9c8ef8f1791446ca"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/160-posture-estimation-2#42ce3c4d7fda3043c4e943905da710e868caed43"
 dependencies = [
  "auto_enums",
  "generic-array 0.13.2",
