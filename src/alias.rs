@@ -91,7 +91,7 @@ impl<'a> DistanceSensor for DistanceSensors<'a> {
 pub type MazeWidth = U4;
 pub type DistanceSensorNum = U3;
 pub type MaxSize = U256;
-pub type GoalSize = U1;
+pub type GoalSize = U2;
 
 pub type Agent<'a> = DefaultAgent<
     LeftMotor<'a>,
@@ -108,6 +108,7 @@ pub type Maze = DefaultMaze<MazeWidth>;
 pub type Solver = DefaultSolver<MazeWidth, MaxSize, GoalSize>;
 
 pub type SearchOperator<'a> = DefaultSearchOperator<
+    'a,
     LeftMotor<'a>,
     RightMotor<'a>,
     LeftEncoder,

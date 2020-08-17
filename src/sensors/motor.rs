@@ -4,8 +4,6 @@ use components::sensors::Motor;
 use embedded_hal::PwmPin;
 use quantities::{Quantity, Voltage};
 
-pub struct VoltmeterError;
-
 pub trait Voltmeter {
     fn get_voltage(&mut self) -> Voltage;
 }

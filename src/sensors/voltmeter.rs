@@ -47,6 +47,7 @@ where
         voltmeter
     }
 
+    #[allow(unused)]
     pub fn update_voltage(&mut self) {
         self.voltage = self.alpha * self.voltage + (1.0 - self.alpha) * self.get_current_voltage();
     }
