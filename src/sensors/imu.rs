@@ -1,14 +1,29 @@
+use core::convert::Infallible;
+
 use components::{sensors::IMU, utils::vector::Vector3};
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
 use nb::block;
 use quantities::{Acceleration, AngularSpeed};
+use stm32f4xx_hal::spi::Error as SpiError;
 
 use crate::wait_ok;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IMUError;
+
+impl From<SpiError> for IMUError {
+    fn from(_error: SpiError) -> Self {
+        Self
+    }
+}
+
+impl From<Infallible> for IMUError {
+    fn from(_error: Infallible) -> Self {
+        Self
+    }
+}
 
 pub struct ICM20648<T, U> {
     pub spi: T,

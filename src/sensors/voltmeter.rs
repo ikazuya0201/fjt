@@ -40,7 +40,7 @@ where
         };
 
         let mut sum = Voltage::default();
-        for i in 0..Self::SUM_NUM {
+        for _ in 0..Self::SUM_NUM {
             sum += voltmeter.get_current_voltage();
         }
         voltmeter.voltage = sum / Self::SUM_NUM as f32;
