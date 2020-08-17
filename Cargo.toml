@@ -27,7 +27,7 @@ features = ["spin_no_std"]
 
 [dependencies.stm32f4xx-hal]
 version = "0.8.3"
-features = ["stm32f413"]
+features = ["stm32f413", "rt"]
 
 [dependencies.components]
 git = "https://github.com/ikazuya0201/mouse_components.git"

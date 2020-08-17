@@ -28,6 +28,7 @@ use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
     delay::Delay,
     i2c::I2c,
+    interrupt,
     prelude::*,
     pwm::tim1,
     qei::Qei,
@@ -62,6 +63,13 @@ fn costs(pattern: Pattern) -> u16 {
         FastRun180 => 25,
         FastRunDiagonal90 => 15,
         SpinBack => 15,
+    }
+}
+
+#[interrupt]
+fn TIM2() {
+    unsafe {
+        SEARCH_OPERATOR.as_ref().unwrap().tick();
     }
 }
 
