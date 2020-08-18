@@ -8,6 +8,7 @@ mod sensors;
 
 use core::cell::RefCell;
 use core::f32::consts::PI;
+use core::fmt::Write;
 
 use components::{
     data_types::{AbsoluteDirection, NodeId, Pattern, Pose, SearchNodeId},
@@ -20,6 +21,7 @@ use components::{
 use cortex_m_rt::entry;
 use embedded_hal::prelude::*;
 use generic_array::arr;
+use jlink_rtt::Output;
 use quantities::{
     Acceleration, Angle, AngularAcceleration, AngularJerk, AngularSpeed, Distance, Frequency, Jerk,
     Speed, Time,
@@ -34,7 +36,7 @@ use stm32f4xx_hal::{
     qei::Qei,
     spi::Spi,
     stm32,
-    timer::Timer,
+    timer::{Event, Timer},
 };
 
 use alias::{
@@ -49,6 +51,8 @@ static mut SOLVER: Option<Solver> = None;
 static mut MAZE: Option<Maze> = None;
 static mut AGENT: Option<Agent> = None;
 static mut SEARCH_OPERATOR: Option<SearchOperator> = None;
+
+static mut TIMER: Option<Timer<stm32::TIM5>> = None;
 
 fn costs(pattern: Pattern) -> u16 {
     use Pattern::*;
@@ -67,9 +71,10 @@ fn costs(pattern: Pattern) -> u16 {
 }
 
 #[interrupt]
-fn TIM2() {
+fn TIM5() {
     unsafe {
         SEARCH_OPERATOR.as_ref().unwrap().tick();
+        TIMER.as_mut().unwrap().clear_interrupt(Event::TimeOut);
     }
 }
 
@@ -89,6 +94,11 @@ fn main() -> ! {
         .freeze();
 
     let mut delay = Delay::new(cortex_m_peripherals.SYST, clocks);
+
+    let mut out = Output::new();
+    writeln!(out, "waiting 5s...").unwrap();
+    delay.delay_ms(5000u32);
+
     let gpioa = device_peripherals.GPIOA.split();
     let gpiob = device_peripherals.GPIOB.split();
     let gpioc = device_peripherals.GPIOC.split();
@@ -97,7 +107,8 @@ fn main() -> ! {
     let wheel_radius = Distance::from_meters(0.00675);
 
     let period = Time::from_seconds(0.001);
-    let mut timer = Timer::tim9(device_peripherals.TIM9, 1.khz(), clocks);
+    let mut timer = Timer::tim5(device_peripherals.TIM5, 1.khz(), clocks);
+    // let mut timer = Timer::tim9(device_peripherals.TIM9, 1.khz(), clocks);
 
     let voltmeter = {
         let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());
@@ -316,8 +327,8 @@ fn main() -> ! {
         NodeId::new(0, 0, AbsoluteDirection::North).unwrap(),
         arr![
             NodeId<MazeWidth>;
-            NodeId::new(1,0,AbsoluteDirection::South).unwrap(),
-            NodeId::new(1,0,AbsoluteDirection::West).unwrap()
+            NodeId::new(2,0,AbsoluteDirection::South).unwrap(),
+            NodeId::new(2,0,AbsoluteDirection::West).unwrap()
         ],
     );
 
@@ -343,6 +354,15 @@ fn main() -> ! {
         SEARCH_OPERATOR.replace(search_operator);
         SEARCH_OPERATOR.as_ref().unwrap()
     };
+
+    search_operator.run().ok();
+
+    timer.listen(Event::TimeOut);
+    unsafe {
+        TIMER.replace(timer);
+        cortex_m::interrupt::enable();
+        cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
+    }
 
     loop {
         search_operator.run().ok();
