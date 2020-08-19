@@ -397,7 +397,7 @@ fn main() -> ! {
     });
 
     loop {
-        search_operator.run().unwrap();
+        search_operator.run().ok();
     }
     //stop interrupt
     // free(|cs| {
