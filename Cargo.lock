@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "components"
 version = "0.2.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=develop/v0.2#c97d75a89dab91855e1df85ae1451c17c324e0e6"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/ignore-around-piller#6167e74d7bdd301623a171bcfd05e35d734b29f8"
 dependencies = [
  "auto_enums",
  "generic-array 0.13.2",
@@ -190,10 +190,8 @@ dependencies = [
  "generic-array 0.13.2",
  "heapless",
  "jlink_rtt",
- "lazy_static",
  "libm",
  "nb 1.0.0",
- "once_cell",
  "panic_rtt",
  "quantities",
  "stm32f4xx-hal",
@@ -258,9 +256,6 @@ name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
-dependencies = [
- "spin",
-]
 
 [[package]]
 name = "libm"
@@ -348,12 +343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "once_cell"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b631f7e854af39a1739f401cf34a8a013dfe09eac4fa4dba91e9768bd28168d"
-
-[[package]]
 name = "panic_rtt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -424,12 +413,6 @@ name = "semver-parser"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "stable_deref_trait"

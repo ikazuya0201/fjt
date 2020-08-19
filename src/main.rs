@@ -9,6 +9,7 @@ mod sensors;
 use core::cell::RefCell;
 use core::f32::consts::PI;
 use core::fmt::Write;
+use core::ops::DerefMut;
 
 use components::{
     data_types::{AbsoluteDirection, NodeId, Pattern, Pose, SearchNodeId},
@@ -18,6 +19,7 @@ use components::{
     },
     prelude::*,
 };
+use cortex_m::interrupt::{free, Mutex};
 use cortex_m_rt::entry;
 use embedded_hal::prelude::*;
 use generic_array::arr;
@@ -52,7 +54,8 @@ static mut MAZE: Option<Maze> = None;
 static mut AGENT: Option<Agent> = None;
 static mut SEARCH_OPERATOR: Option<SearchOperator> = None;
 
-static mut TIMER: Option<Timer<stm32::TIM5>> = None;
+static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
+static OUTPUT: Mutex<RefCell<Option<Output>>> = Mutex::new(RefCell::new(None));
 
 fn costs(pattern: Pattern) -> u16 {
     use Pattern::*;
@@ -72,10 +75,25 @@ fn costs(pattern: Pattern) -> u16 {
 
 #[interrupt]
 fn TIM5() {
-    unsafe {
-        SEARCH_OPERATOR.as_ref().unwrap().tick();
-        TIMER.as_mut().unwrap().clear_interrupt(Event::TimeOut);
-    }
+    // static mut COUNT: u32 = 0;
+
+    free(|cs| {
+        if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
+            tim5.clear_interrupt(Event::TimeOut);
+        }
+        unsafe {
+            // *COUNT += 1;
+            if let Some(ref search_operator) = SEARCH_OPERATOR.as_ref() {
+                search_operator.tick();
+            }
+            // if *COUNT == 5000 {
+            //     AGENT.as_ref().unwrap().stop();
+            //     if let Some(ref mut out) = OUTPUT.borrow(cs).borrow_mut().deref_mut() {
+            //         writeln!(out, "{:?}", MAZE.as_ref().unwrap());
+            //     }
+            // }
+        }
+    });
 }
 
 #[entry]
@@ -189,6 +207,8 @@ fn main() -> ! {
                 .period(period)
                 .cut_off_frequency(Frequency::from_hertz(50.0))
                 .initial_posture(Angle::from_degree(90.0))
+                .initial_x(Distance::from_meters(0.045))
+                .initial_y(Distance::from_meters(0.045))
                 // .wheel_interval(Distance::from_meters(0.0335))
                 .build()
         };
@@ -246,10 +266,11 @@ fn main() -> ! {
                 .kanayama_kx(3.0)
                 .kanayama_ky(3.0)
                 .kanayama_ktheta(30.0)
+                .fail_safe_distance(Distance::from_meters(0.05))
                 .build()
         };
 
-        let search_speed = Speed::from_meter_per_second(0.15);
+        let search_speed = Speed::from_meter_per_second(0.12);
 
         let trajectory_generator = TrajectoryGeneratorBuilder::new()
             .period(period)
@@ -266,54 +287,54 @@ fn main() -> ! {
             .build();
 
         let obstacle_detector = {
-            let tof1 = {
+            let tof_left = {
                 let enable_pin = gpioh.ph1.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    i2c,
+                    &i2c,
                     enable_pin,
                     &mut delay,
                     0x31,
                     Pose {
-                        x: Distance::from_meters(-0.015),
-                        y: Distance::from_meters(0.015),
-                        theta: Angle::from_degree(0.0),
+                        x: Distance::from_meters(-0.0115),
+                        y: Distance::from_meters(0.013),
+                        theta: Angle::from_degree(90.0),
                     },
                 )
             };
-            let tof2 = {
+            let tof_right = {
                 let enable_pin = gpioa.pa15.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    i2c,
+                    &i2c,
                     enable_pin,
                     &mut delay,
                     0x30,
                     Pose {
-                        x: Distance::from_meters(0.015),
-                        y: Distance::from_meters(0.015),
-                        theta: Angle::from_degree(180.0),
+                        x: Distance::from_meters(0.0115),
+                        y: Distance::from_meters(0.013),
+                        theta: Angle::from_degree(-90.0),
                     },
                 )
             };
-            let tof3 = {
+            let tof_front = {
                 let enable_pin = gpioh.ph0.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    i2c,
+                    &i2c,
                     enable_pin,
                     &mut delay,
                     0x29,
                     Pose {
                         x: Distance::from_meters(0.0),
-                        y: Distance::from_meters(0.025),
-                        theta: Angle::from_degree(90.0),
+                        y: Distance::from_meters(0.023),
+                        theta: Angle::from_degree(0.0),
                     },
                 )
             };
 
             ObstacleDetector::new(arr![
                 DistanceSensors;
-                DistanceSensors::Left(tof1),
-                DistanceSensors::Right(tof2),
-                DistanceSensors::Front(tof3)
+                DistanceSensors::Left(tof_left),
+                DistanceSensors::Right(tof_right),
+                DistanceSensors::Front(tof_front)
             ])
         };
         Agent::new(obstacle_detector, estimator, tracker, trajectory_generator)
@@ -321,6 +342,7 @@ fn main() -> ! {
 
     let maze = MazeBuilder::new()
         .costs(costs as fn(Pattern) -> u16)
+        .wall_existence_probability_threshold(0.3)
         .build::<MazeWidth>();
 
     let solver: Solver = Solver::new(
@@ -344,6 +366,11 @@ fn main() -> ! {
     };
 
     let search_operator: SearchOperator = SearchOperator::new(
+        Pose::new(
+            Distance::from_meters(0.045),
+            Distance::from_meters(0.045),
+            Angle::from_degree(90.0),
+        ),
         SearchNodeId::new(0, 1, AbsoluteDirection::North).unwrap(),
         maze,
         agent,
@@ -355,16 +382,39 @@ fn main() -> ! {
         SEARCH_OPERATOR.as_ref().unwrap()
     };
 
+    search_operator.init();
     search_operator.run().ok();
 
     timer.listen(Event::TimeOut);
-    unsafe {
-        TIMER.replace(timer);
-        cortex_m::interrupt::enable();
-        cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
-    }
+    free(|cs| {
+        TIMER_TIM5.borrow(cs).replace(Some(timer));
+        OUTPUT.borrow(cs).replace(Some(out));
+        cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
+        unsafe {
+            cortex_m::interrupt::enable();
+            cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
+        }
+    });
 
     loop {
-        search_operator.run().ok();
+        search_operator.run().unwrap();
     }
+    //stop interrupt
+    // free(|cs| {
+    //     cortex_m::peripheral::NVIC::mask(interrupt::TIM5);
+    //     cortex_m::interrupt::disable();
+    //     cortex_m::peripheral::NVIC::pend(interrupt::TIM5);
+    // });
+    // writeln!(out, "out").unwrap();
+    // delay.delay_ms(5000u32);
+    // writeln!(out, "{:?}", maze).unwrap();
+    // panic!("finished!");
+
+    // loop {
+    //     free(|cs| {
+    //         if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
+    //             nb::block!(tim5.wait());
+    //         }
+    //     })
+    // }
 }

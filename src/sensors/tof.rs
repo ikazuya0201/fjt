@@ -51,7 +51,7 @@ where
     const IDLE_VALUE: u8 = 0x01;
 
     //standard deviation
-    const STANDARD_DEVIATION: Distance = Distance::from_meters(0.0005);
+    const STANDARD_DEVIATION: Distance = Distance::from_meters(0.002);
 
     pub fn new<'b, V: DelayMs<u32>>(
         i2c: &'a core::cell::RefCell<T>,

@@ -17,21 +17,13 @@ libm = "0.2.1"
 typenum = "1.12.0"
 generic-array = "0.13.2"
 
-[dependencies.once_cell]
-version = "1.4.0"
-default-features = false
-
-[dependencies.lazy_static]
-version = "1.4.0"
-features = ["spin_no_std"]
-
 [dependencies.stm32f4xx-hal]
 version = "0.8.3"
 features = ["stm32f413", "rt"]
 
 [dependencies.components]
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "develop/v0.2"
+branch = "modify/ignore-around-piller"
 features = ["debug"]
 
 [dependencies.quantities]
