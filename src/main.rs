@@ -1,16 +1,21 @@
 #![no_std]
 #![no_main]
+#![feature(alloc_error_handler)]
 
+extern crate alloc;
 extern crate panic_rtt;
 mod alias;
 mod macros;
 mod sensors;
 
+use alloc::rc::Rc;
+use core::alloc::Layout;
 use core::cell::RefCell;
 use core::f32::consts::PI;
 use core::fmt::Write;
 use core::ops::DerefMut;
 
+use alloc_cortex_m::CortexMHeap;
 use components::{
     data_types::{AbsoluteDirection, NodeId, Pattern, Pose, SearchNodeId},
     impls::{
@@ -57,6 +62,9 @@ static mut SEARCH_OPERATOR: Option<SearchOperator> = None;
 static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
 static OUTPUT: Mutex<RefCell<Option<Output>>> = Mutex::new(RefCell::new(None));
 
+#[global_allocator]
+static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
+
 fn costs(pattern: Pattern) -> u16 {
     use Pattern::*;
 
@@ -98,6 +106,10 @@ fn TIM5() {
 
 #[entry]
 fn main() -> ! {
+    let start = cortex_m_rt::heap_start() as usize;
+    let size = 1024; // in bytes
+    unsafe { ALLOCATOR.init(start, size) }
+
     let cortex_m_peripherals = cortex_m::Peripherals::take().unwrap();
     let device_peripherals = stm32::Peripherals::take().unwrap();
 
@@ -417,4 +429,9 @@ fn main() -> ! {
     //         }
     //     })
     // }
+}
+
+#[alloc_error_handler]
+fn oom(_: Layout) -> ! {
+    loop {}
 }
