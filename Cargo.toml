@@ -20,6 +20,10 @@ typenum = "1.12.0"
 generic-array = "0.13.2"
 alloc-cortex-m = "0.4.0"
 
+[dependencies.lazy_static]
+version = "1.4.0"
+features = ["spin_no_std"]
+
 [dependencies.stm32f4xx-hal]
 version = "0.8.3"
 features = ["stm32f413", "rt"]
