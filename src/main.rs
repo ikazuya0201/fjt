@@ -46,21 +46,12 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 
-use alias::{
-    Agent, DistanceSensors, Maze, MazeWidth, SearchOperator, SensorI2c, Solver, Voltmeter,
-};
+use alias::{Agent, DistanceSensors, MazeWidth, SearchOperator, Solver, Voltmeter};
 use sensors::{IMotor, ICM20648, MA702GQ, VL6180X};
 
-static mut VOLTMETER: Option<RefCell<Voltmeter>> = None;
-static mut I2C: Option<RefCell<SensorI2c>> = None;
-
-static mut SOLVER: Option<Solver> = None;
-static mut MAZE: Option<Maze> = None;
-static mut AGENT: Option<Agent> = None;
 static mut SEARCH_OPERATOR: Option<SearchOperator> = None;
 
 static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
-static OUTPUT: Mutex<RefCell<Option<Output>>> = Mutex::new(RefCell::new(None));
 
 #[global_allocator]
 static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
@@ -107,7 +98,7 @@ fn TIM5() {
 #[entry]
 fn main() -> ! {
     let start = cortex_m_rt::heap_start() as usize;
-    let size = 1024; // in bytes
+    let size = 4096; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
     let cortex_m_peripherals = cortex_m::Peripherals::take().unwrap();
@@ -143,25 +134,24 @@ fn main() -> ! {
     let voltmeter = {
         let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());
         let pa7 = gpioa.pa7.into_analog();
-        RefCell::new(Voltmeter::new(adc, pa7, period, Frequency::from_hertz(1.0)))
+        Rc::new(RefCell::new(Voltmeter::new(
+            adc,
+            pa7,
+            period,
+            Frequency::from_hertz(1.0),
+        )))
     };
 
     let i2c = {
         let scl = gpiob.pb8.into_alternate_af4().set_open_drain();
         let sda = gpiob.pb9.into_alternate_af4().set_open_drain();
         let i2c_pins = (scl, sda);
-        RefCell::new(I2c::i2c1(
+        Rc::new(RefCell::new(I2c::i2c1(
             device_peripherals.I2C1,
             i2c_pins,
             400.khz(),
             clocks,
-        ))
-    };
-
-    let (voltmeter, i2c) = unsafe {
-        VOLTMETER.replace(voltmeter);
-        I2C.replace(i2c);
-        (VOLTMETER.as_ref().unwrap(), I2C.as_ref().unwrap())
+        )))
     };
 
     let agent = {
@@ -241,7 +231,7 @@ fn main() -> ! {
                 pwm3.enable();
                 pwm4.enable();
                 (
-                    IMotor::new(pwm2, pwm1, voltmeter),
+                    IMotor::new(pwm2, pwm1, Rc::clone(&voltmeter)),
                     IMotor::new(pwm4, pwm3, voltmeter),
                 )
             };
@@ -302,7 +292,7 @@ fn main() -> ! {
             let tof_left = {
                 let enable_pin = gpioh.ph1.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    &i2c,
+                    Rc::clone(&i2c),
                     enable_pin,
                     &mut delay,
                     0x31,
@@ -316,7 +306,7 @@ fn main() -> ! {
             let tof_right = {
                 let enable_pin = gpioa.pa15.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    &i2c,
+                    Rc::clone(&i2c),
                     enable_pin,
                     &mut delay,
                     0x30,
@@ -330,7 +320,7 @@ fn main() -> ! {
             let tof_front = {
                 let enable_pin = gpioh.ph0.into_push_pull_output();
                 VL6180X::<_, _>::new(
-                    &i2c,
+                    i2c,
                     enable_pin,
                     &mut delay,
                     0x29,
@@ -349,33 +339,29 @@ fn main() -> ! {
                 DistanceSensors::Front(tof_front)
             ])
         };
-        Agent::new(obstacle_detector, estimator, tracker, trajectory_generator)
+        Rc::new(Agent::new(
+            obstacle_detector,
+            estimator,
+            tracker,
+            trajectory_generator,
+        ))
     };
 
-    let maze = MazeBuilder::new()
-        .costs(costs as fn(Pattern) -> u16)
-        .wall_existence_probability_threshold(0.3)
-        .build::<MazeWidth>();
+    let maze = Rc::new(
+        MazeBuilder::new()
+            .costs(costs as fn(Pattern) -> u16)
+            .wall_existence_probability_threshold(0.3)
+            .build::<MazeWidth>(),
+    );
 
-    let solver: Solver = Solver::new(
+    let solver = Rc::new(Solver::new(
         NodeId::new(0, 0, AbsoluteDirection::North).unwrap(),
         arr![
             NodeId<MazeWidth>;
             NodeId::new(2,0,AbsoluteDirection::South).unwrap(),
             NodeId::new(2,0,AbsoluteDirection::West).unwrap()
         ],
-    );
-
-    let (agent, maze, solver) = unsafe {
-        AGENT.replace(agent);
-        MAZE.replace(maze);
-        SOLVER.replace(solver);
-        (
-            AGENT.as_ref().unwrap(),
-            MAZE.as_ref().unwrap(),
-            SOLVER.as_ref().unwrap(),
-        )
-    };
+    ));
 
     let search_operator: SearchOperator = SearchOperator::new(
         Pose::new(
@@ -400,7 +386,6 @@ fn main() -> ! {
     timer.listen(Event::TimeOut);
     free(|cs| {
         TIMER_TIM5.borrow(cs).replace(Some(timer));
-        OUTPUT.borrow(cs).replace(Some(out));
         cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
         unsafe {
             cortex_m::interrupt::enable();
@@ -411,27 +396,9 @@ fn main() -> ! {
     loop {
         search_operator.run().ok();
     }
-    //stop interrupt
-    // free(|cs| {
-    //     cortex_m::peripheral::NVIC::mask(interrupt::TIM5);
-    //     cortex_m::interrupt::disable();
-    //     cortex_m::peripheral::NVIC::pend(interrupt::TIM5);
-    // });
-    // writeln!(out, "out").unwrap();
-    // delay.delay_ms(5000u32);
-    // writeln!(out, "{:?}", maze).unwrap();
-    // panic!("finished!");
-
-    // loop {
-    //     free(|cs| {
-    //         if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
-    //             nb::block!(tim5.wait());
-    //         }
-    //     })
-    // }
 }
 
 #[alloc_error_handler]
-fn oom(_: Layout) -> ! {
-    loop {}
+fn oom(layout: Layout) -> ! {
+    panic!("alloc error: {:?}", layout);
 }

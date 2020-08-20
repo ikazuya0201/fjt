@@ -1,3 +1,6 @@
+use alloc::rc::Rc;
+use core::cell::RefCell;
+
 use crate::wait_ok;
 use components::{data_types::Pose, sensors::DistanceSensor, utils::sample::Sample};
 use embedded_hal::{
@@ -17,19 +20,19 @@ enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VL6180XError;
 
-pub struct VL6180X<'a, T, U>
+pub struct VL6180X<T, U>
 where
     T: Write + WriteRead,
     U: OutputPin,
 {
-    i2c: &'a core::cell::RefCell<T>,
+    i2c: Rc<RefCell<T>>,
     enable_pin: U,
     device_address: u8,
     state: State,
     pose: Pose,
 }
 
-impl<'a, T, U> VL6180X<'a, T, U>
+impl<T, U> VL6180X<T, U>
 where
     T: Write + WriteRead,
     U: OutputPin,
@@ -54,7 +57,7 @@ where
     const STANDARD_DEVIATION: Distance = Distance::from_meters(0.002);
 
     pub fn new<'b, V: DelayMs<u32>>(
-        i2c: &'a core::cell::RefCell<T>,
+        i2c: Rc<RefCell<T>>,
         enable_pin: U,
         delay: &'b mut V,
         new_address: u8, //7bit address
@@ -178,7 +181,7 @@ where
     }
 }
 
-impl<T, U> DistanceSensor for VL6180X<'_, T, U>
+impl<T, U> DistanceSensor for VL6180X<T, U>
 where
     T: Write + WriteRead,
     U: OutputPin,

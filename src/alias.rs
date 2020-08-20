@@ -26,9 +26,9 @@ use crate::sensors::{IMotor, IVoltmeter, VL6180XError, ICM20648, MA702GQ, VL6180
 
 pub type Voltmeter = IVoltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
 
-pub type LeftMotor<'a> = IMotor<'a, PwmChannels<TIM1, C2>, PwmChannels<TIM1, C1>, Voltmeter>;
+pub type LeftMotor = IMotor<PwmChannels<TIM1, C2>, PwmChannels<TIM1, C1>, Voltmeter>;
 
-pub type RightMotor<'a> = IMotor<'a, PwmChannels<TIM1, C4>, PwmChannels<TIM1, C3>, Voltmeter>;
+pub type RightMotor = IMotor<PwmChannels<TIM1, C4>, PwmChannels<TIM1, C3>, Voltmeter>;
 
 pub type LeftEncoder = MA702GQ<Qei<TIM4, (PB6<Alternate<AF2>>, PB7<Alternate<AF2>>)>>;
 
@@ -54,19 +54,19 @@ impl From<I2cError> for VL6180XError {
 
 pub type SensorI2c = I2c<I2C1, (PB8<AlternateOD<AF4>>, PB9<AlternateOD<AF4>>)>;
 
-pub type DistanceSensorFront<'a> = VL6180X<'a, SensorI2c, PH0<Output<PushPull>>>;
+pub type DistanceSensorFront = VL6180X<SensorI2c, PH0<Output<PushPull>>>;
 
-pub type DistanceSensorRight<'a> = VL6180X<'a, SensorI2c, PA15<Output<PushPull>>>;
+pub type DistanceSensorRight = VL6180X<SensorI2c, PA15<Output<PushPull>>>;
 
-pub type DistanceSensorLeft<'a> = VL6180X<'a, SensorI2c, PH1<Output<PushPull>>>;
+pub type DistanceSensorLeft = VL6180X<SensorI2c, PH1<Output<PushPull>>>;
 
-pub enum DistanceSensors<'a> {
-    Front(DistanceSensorFront<'a>),
-    Right(DistanceSensorRight<'a>),
-    Left(DistanceSensorLeft<'a>),
+pub enum DistanceSensors {
+    Front(DistanceSensorFront),
+    Right(DistanceSensorRight),
+    Left(DistanceSensorLeft),
 }
 
-impl<'a> DistanceSensor for DistanceSensors<'a> {
+impl DistanceSensor for DistanceSensors {
     type Error = VL6180XError;
 
     fn pose(&self) -> Pose {
@@ -93,28 +93,28 @@ pub type DistanceSensorNum = U3;
 pub type MaxSize = U256;
 pub type GoalSize = U2;
 
-pub type Agent<'a> = DefaultAgent<
-    LeftMotor<'a>,
-    RightMotor<'a>,
+pub type Agent = DefaultAgent<
+    LeftMotor,
+    RightMotor,
     LeftEncoder,
     RightEncoder,
     Imu,
-    DistanceSensors<'a>,
+    DistanceSensors,
     DistanceSensorNum,
 >;
 
+#[allow(unused)]
 pub type Maze = DefaultMaze<MazeWidth>;
 
 pub type Solver = DefaultSolver<MazeWidth, MaxSize, GoalSize>;
 
-pub type SearchOperator<'a> = DefaultSearchOperator<
-    'a,
-    LeftMotor<'a>,
-    RightMotor<'a>,
+pub type SearchOperator = DefaultSearchOperator<
+    LeftMotor,
+    RightMotor,
     LeftEncoder,
     RightEncoder,
     Imu,
-    DistanceSensors<'a>,
+    DistanceSensors,
     DistanceSensorNum,
     MazeWidth,
     MaxSize,

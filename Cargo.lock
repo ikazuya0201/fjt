@@ -109,7 +109,7 @@ dependencies = [
 [[package]]
 name = "components"
 version = "0.2.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/ignore-around-piller#6167e74d7bdd301623a171bcfd05e35d734b29f8"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=modify/203-use-heap#5081565eeb4c967a3dd79bb02cf14f64c1288597"
 dependencies = [
  "auto_enums",
  "generic-array 0.13.2",
