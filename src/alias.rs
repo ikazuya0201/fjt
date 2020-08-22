@@ -93,7 +93,7 @@ pub type DistanceSensorNum = U3;
 pub type MaxSize = U256;
 pub type GoalSize = U2;
 
-pub type Agent = DefaultAgent<
+pub type Agent<Logger> = DefaultAgent<
     LeftMotor,
     RightMotor,
     LeftEncoder,
@@ -101,6 +101,7 @@ pub type Agent = DefaultAgent<
     Imu,
     DistanceSensors,
     DistanceSensorNum,
+    Logger,
 >;
 
 #[allow(unused)]
@@ -108,7 +109,7 @@ pub type Maze = DefaultMaze<MazeWidth>;
 
 pub type Solver = DefaultSolver<MazeWidth, MaxSize, GoalSize>;
 
-pub type SearchOperator = DefaultSearchOperator<
+pub type SearchOperator<Logger> = DefaultSearchOperator<
     LeftMotor,
     RightMotor,
     LeftEncoder,
@@ -119,4 +120,5 @@ pub type SearchOperator = DefaultSearchOperator<
     MazeWidth,
     MaxSize,
     GoalSize,
+    Logger,
 >;
