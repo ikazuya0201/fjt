@@ -2,6 +2,9 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
+#[macro_use]
+extern crate typenum;
+
 extern crate alloc;
 mod alias;
 mod init;
@@ -32,8 +35,6 @@ lazy_static! {
     static ref STORAGE: Storage = init_storage();
 }
 
-// type Logger = String<U4096>;
-
 static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
 
 #[global_allocator]
@@ -46,6 +47,7 @@ fn panic(info: &PanicInfo) -> ! {
     for ref e in STORAGE.log.borrow().iter() {
         writeln!(out, "{},{},{},{}", e.0, e.1, e.2, e.3).ok();
     }
+    writeln!(out, "{:?}", STORAGE.maze).ok();
     loop {}
 }
 

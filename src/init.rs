@@ -31,7 +31,7 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 
-use crate::alias::{Agent, DistanceSensors, MazeWidth, SearchOperator, Solver, Voltmeter};
+use crate::alias::{Agent, DistanceSensors, Maze, MazeWidth, SearchOperator, Solver, Voltmeter};
 use crate::logger::{ILogger, Log};
 use crate::sensors::{IMotor, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
@@ -58,6 +58,7 @@ type Logger = ILogger<LogSize>;
 pub struct Storage {
     pub search_operator: SearchOperator<Logger>,
     pub log: Rc<RefCell<Log<LogSize>>>,
+    pub maze: Rc<Maze>,
 }
 
 unsafe impl Sync for Storage {}
@@ -207,7 +208,7 @@ pub fn init_storage() -> Storage {
                 .ki(0.05)
                 .kd(0.01)
                 .period(period)
-                .model_gain(2.0)
+                .model_gain(1.0)
                 .model_time_constant(Time::from_seconds(0.3694))
                 .build();
 
@@ -216,7 +217,7 @@ pub fn init_storage() -> Storage {
                 .ki(0.2)
                 .kd(0.0)
                 .period(period)
-                .model_gain(20.0)
+                .model_gain(10.0)
                 .model_time_constant(Time::from_seconds(0.1499))
                 .build();
 
@@ -224,16 +225,15 @@ pub fn init_storage() -> Storage {
                 .right_motor(right_motor)
                 .left_motor(left_motor)
                 .period(period)
-                .kx(30.0)
-                .kdx(9.0)
-                .ky(30.0)
-                .kdy(9.0)
+                .kx(40.0)
+                .kdx(4.0)
+                .ky(40.0)
+                .kdy(4.0)
                 .valid_control_lower_bound(Speed::from_meter_per_second(0.03))
                 .translation_controller(trans_controller)
                 .rotation_controller(rot_controller)
-                .kanayama_kx(3.0)
-                .kanayama_ky(3.0)
-                .kanayama_ktheta(30.0)
+                .low_zeta(1.0)
+                .low_b(1e-3)
                 .fail_safe_distance(Distance::from_meters(0.05))
                 .logger(logger)
                 .build()
@@ -341,10 +341,11 @@ pub fn init_storage() -> Storage {
                 Angle::from_degree(90.0),
             ),
             SearchNodeId::new(0, 1, AbsoluteDirection::North).unwrap(),
-            maze,
+            Rc::clone(&maze),
             agent,
             solver,
         ),
         log,
+        maze,
     }
 }

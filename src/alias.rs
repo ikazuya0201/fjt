@@ -90,7 +90,7 @@ impl DistanceSensor for DistanceSensors {
 
 pub type MazeWidth = U4;
 pub type DistanceSensorNum = U3;
-pub type MaxSize = U256;
+pub type MaxSize = op!(U4 * U4 * MazeWidth * MazeWidth);
 pub type GoalSize = U2;
 
 pub type Agent<Logger> = DefaultAgent<
