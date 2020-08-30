@@ -45,6 +45,7 @@ use uom::si::{
 
 use crate::alias::{Agent, DistanceSensors, Maze, MazeWidth, SearchOperator, Solver, Voltmeter};
 use crate::logger::{ILogger, Log};
+use crate::math::Math;
 use crate::sensors::{IMotor, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
 
@@ -329,7 +330,7 @@ pub fn init_storage() -> Storage {
         MazeBuilder::new()
             .costs(costs as fn(Pattern) -> u16)
             .wall_existence_probability_threshold(0.3)
-            .build::<MazeWidth>(),
+            .build::<MazeWidth, Math>(),
     );
 
     let solver = Rc::new(Solver::new(

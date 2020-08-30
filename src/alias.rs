@@ -22,6 +22,7 @@ use stm32f4xx_hal::{
 use typenum::consts::*;
 use uom::si::f32::Length;
 
+use crate::math::Math;
 use crate::sensors::{IMotor, IVoltmeter, VL6180XError, ICM20648, MA702GQ, VL6180X};
 
 pub type Voltmeter = IVoltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
@@ -102,10 +103,11 @@ pub type Agent<Logger> = DefaultAgent<
     DistanceSensors,
     DistanceSensorNum,
     Logger,
+    Math,
 >;
 
 #[allow(unused)]
-pub type Maze = DefaultMaze<MazeWidth>;
+pub type Maze = DefaultMaze<MazeWidth, Math>;
 
 pub type Solver = DefaultSolver<MazeWidth, MaxSize, GoalSize>;
 
@@ -121,4 +123,5 @@ pub type SearchOperator<Logger> = DefaultSearchOperator<
     MaxSize,
     GoalSize,
     Logger,
+    Math,
 >;

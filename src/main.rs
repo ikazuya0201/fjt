@@ -10,6 +10,7 @@ mod alias;
 mod init;
 mod logger;
 mod macros;
+mod math;
 mod sensors;
 
 use core::alloc::Layout;
