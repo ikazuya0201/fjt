@@ -1,6 +1,6 @@
 use core::convert::Infallible;
 
-use components::{sensors::IMU, utils::vector::Vector3};
+use components::sensors::IMU;
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
@@ -28,8 +28,8 @@ impl From<Infallible> for IMUError {
 pub struct ICM20648<T, U> {
     pub spi: T,
     cs: U,
-    accel_offsets: [Acceleration; 3],
-    gyro_offsets: [AngularSpeed; 3],
+    accel_offset: Acceleration,
+    gyro_offset: AngularSpeed,
 }
 
 impl<T, U> ICM20648<T, U>
@@ -46,13 +46,9 @@ where
     const RA_LP_CONFIG: u8 = 0x05;
     const RA_PWR_MGMT_1: u8 = 0x06;
     //gyrometer
-    const RA_GYRO_X_OUT_H: u8 = 0x33;
-    const RA_GYRO_Y_OUT_H: u8 = 0x35;
     const RA_GYRO_Z_OUT_H: u8 = 0x37;
     //accelerometer
-    const RA_ACCEL_X_OUT_H: u8 = 0x2D;
     const RA_ACCEL_Y_OUT_H: u8 = 0x2F;
-    const RA_ACCEL_Z_OUT_H: u8 = 0x31;
     //user bank 2
     const RA_GYRO_CONFIG_1: u8 = 0x01;
     const RA_ACCEL_CONFIG: u8 = 0x14;
@@ -72,8 +68,8 @@ where
         let mut icm = Self {
             spi,
             cs,
-            accel_offsets: [Acceleration::from_meter_per_second_squared(0.0); 3],
-            gyro_offsets: [AngularSpeed::from_radian_per_second(0.0); 3],
+            accel_offset: Default::default(),
+            gyro_offset: Default::default(),
         };
 
         icm.init(delay, timer);
@@ -115,23 +111,17 @@ where
     where
         W: CountDown,
     {
-        let mut accel_offset_sums = [Acceleration::from_meter_per_second_squared(0.0); 3];
-        let mut gyro_offset_sums = [AngularSpeed::from_radian_per_second(0.0); 3];
+        let mut accel_offset_sum = Acceleration::default();
+        let mut gyro_offset_sum = AngularSpeed::default();
         for _ in 0..Self::CALIBRATION_NUM {
-            let accels = block!(self.get_accelerations())?;
-            let gyros = block!(self.get_angular_speeds())?;
-            accel_offset_sums[0] += accels.x;
-            accel_offset_sums[1] += accels.y;
-            accel_offset_sums[2] += accels.z;
-            gyro_offset_sums[0] += gyros.x;
-            gyro_offset_sums[1] += gyros.y;
-            gyro_offset_sums[2] += gyros.z;
+            let accel = block!(self.get_translational_acceleration())?;
+            let gyro = block!(self.get_angular_speed())?;
+            accel_offset_sum += accel;
+            gyro_offset_sum += gyro;
             block!(timer.wait()).ok();
         }
-        for i in 0..3 {
-            self.accel_offsets[i] += accel_offset_sums[i] / Self::CALIBRATION_NUM as f32;
-            self.gyro_offsets[i] += gyro_offset_sums[i] / Self::CALIBRATION_NUM as f32;
-        }
+        self.accel_offset += accel_offset_sum / Self::CALIBRATION_NUM as f32;
+        self.gyro_offset += gyro_offset_sum / Self::CALIBRATION_NUM as f32;
         Ok(())
     }
 
@@ -194,14 +184,6 @@ where
         ((higher as u16) << 8 | lower as u16) as i16
     }
 
-    fn axis_to_index(&self, axis: Axis) -> usize {
-        match axis {
-            Axis::X => 0,
-            Axis::Y => 1,
-            Axis::Z => 2,
-        }
-    }
-
     fn convert_raw_data_to_angular_speed(&mut self, gyro_value: i16) -> AngularSpeed {
         let raw_angular_speed =
             AngularSpeed::from_degree_per_second((gyro_value as f32) / (core::i16::MAX as f32));
@@ -213,42 +195,6 @@ where
             Acceleration::from_gravity((accel_value as f32) / (core::i16::MAX as f32));
         Self::ACCEL_RATIO * raw_acceleration
     }
-
-    #[inline]
-    fn get_angular_speed(&mut self, axis: Axis) -> nb::Result<AngularSpeed, IMUError> {
-        let address = match axis {
-            Axis::X => Self::RA_GYRO_X_OUT_H,
-            Axis::Y => Self::RA_GYRO_Y_OUT_H,
-            Axis::Z => Self::RA_GYRO_Z_OUT_H,
-        };
-        let mut buffer = [0; 3];
-        let buffer = self.read_from_registers(address, &mut buffer)?;
-        Ok(
-            self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[0], buffer[1]))
-                - self.gyro_offsets[self.axis_to_index(axis)],
-        )
-    }
-
-    #[inline]
-    fn get_acceleration(&mut self, axis: Axis) -> nb::Result<Acceleration, IMUError> {
-        let address = match axis {
-            Axis::X => Self::RA_ACCEL_X_OUT_H,
-            Axis::Y => Self::RA_ACCEL_Y_OUT_H,
-            Axis::Z => Self::RA_ACCEL_Z_OUT_H,
-        };
-        let mut buffer = [0; 3];
-        let buffer = self.read_from_registers(address, &mut buffer)?;
-        Ok(
-            self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[0], buffer[1]))
-                - self.accel_offsets[self.axis_to_index(axis)],
-        )
-    }
-}
-
-enum Axis {
-    X,
-    Y,
-    Z,
 }
 
 impl<T, U> IMU for ICM20648<T, U>
@@ -259,53 +205,21 @@ where
 {
     type Error = IMUError;
 
-    fn get_angular_speed_x(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
-        self.get_angular_speed(Axis::X)
+    fn get_angular_speed(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
+        let mut buffer = [0; 3];
+        let buffer = self.read_from_registers(Self::RA_GYRO_Z_OUT_H, &mut buffer)?;
+        Ok(
+            self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[0], buffer[1]))
+                - self.gyro_offset,
+        )
     }
 
-    fn get_angular_speed_y(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
-        self.get_angular_speed(Axis::Y)
-    }
-
-    fn get_angular_speed_z(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
-        self.get_angular_speed(Axis::Z)
-    }
-
-    fn get_acceleration_x(&mut self) -> nb::Result<Acceleration, Self::Error> {
-        Ok(-self.get_acceleration(Axis::X)?)
-    }
-
-    fn get_acceleration_y(&mut self) -> nb::Result<Acceleration, Self::Error> {
-        Ok(-self.get_acceleration(Axis::Y)?)
-    }
-
-    fn get_acceleration_z(&mut self) -> nb::Result<Acceleration, Self::Error> {
-        self.get_acceleration(Axis::Z)
-    }
-
-    fn get_angular_speeds(&mut self) -> nb::Result<Vector3<AngularSpeed>, Self::Error> {
-        let mut buffer = [0; 7];
-        let buffer = self.read_from_registers(Self::RA_GYRO_X_OUT_H, &mut buffer)?;
-        Ok(Vector3 {
-            x: self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[0], buffer[1]))
-                - self.gyro_offsets[self.axis_to_index(Axis::X)],
-            y: self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[2], buffer[3]))
-                - self.gyro_offsets[self.axis_to_index(Axis::Y)],
-            z: self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[4], buffer[5]))
-                - self.gyro_offsets[self.axis_to_index(Axis::Z)],
-        })
-    }
-
-    fn get_accelerations(&mut self) -> nb::Result<Vector3<Acceleration>, Self::Error> {
-        let mut buffer = [0; 7];
-        let buffer = self.read_from_registers(Self::RA_ACCEL_X_OUT_H, &mut buffer)?;
-        Ok(Vector3 {
-            x: self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[0], buffer[1]))
-                - self.accel_offsets[self.axis_to_index(Axis::X)],
-            y: self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[2], buffer[3]))
-                - self.accel_offsets[self.axis_to_index(Axis::Y)],
-            z: self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[4], buffer[5]))
-                - self.accel_offsets[self.axis_to_index(Axis::Z)],
-        })
+    fn get_translational_acceleration(&mut self) -> nb::Result<Acceleration, Self::Error> {
+        let mut buffer = [0; 3];
+        let buffer = self.read_from_registers(Self::RA_ACCEL_Y_OUT_H, &mut buffer)?;
+        Ok(
+            -self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[0], buffer[1]))
+                + self.accel_offset,
+        )
     }
 }
