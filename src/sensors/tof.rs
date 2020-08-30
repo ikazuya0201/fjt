@@ -1,15 +1,20 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
+use core::marker::PhantomData;
 
 use crate::wait_ok;
-use components::{data_types::Pose, sensors::DistanceSensor, utils::sample::Sample};
+use components::{
+    data_types::Pose,
+    quantities::{f32::Length, length::meter},
+    sensors::DistanceSensor,
+    utils::sample::Sample,
+};
 use embedded_hal::{
     blocking::delay::DelayMs,
     blocking::i2c::{Write, WriteRead},
     digital::v2::OutputPin,
 };
 use nb::block;
-use quantities::Distance;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -54,7 +59,11 @@ where
     const IDLE_VALUE: u8 = 0x01;
 
     //standard deviation
-    const STANDARD_DEVIATION: Distance = Distance::from_meters(0.002);
+    const STANDARD_DEVIATION: Length = Length {
+        dimension: PhantomData,
+        units: PhantomData,
+        value: 0.001,
+    };
 
     pub fn new<'b, V: DelayMs<u32>>(
         i2c: Rc<RefCell<T>>,
@@ -193,7 +202,7 @@ where
         self.pose
     }
 
-    fn get_distance(&mut self) -> nb::Result<Sample<Distance>, Self::Error> {
+    fn get_distance(&mut self) -> nb::Result<Sample<Length>, Self::Error> {
         use State::*;
 
         match self.state {
@@ -217,7 +226,7 @@ where
                 self.state = Idle;
 
                 Ok(Sample {
-                    mean: Distance::from_meters(distance as f32 / 1000.0),
+                    mean: Length::new::<meter>(distance as f32 / 1000.0),
                     standard_deviation: Self::STANDARD_DEVIATION,
                 })
             }

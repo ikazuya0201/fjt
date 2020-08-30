@@ -11,7 +11,6 @@ opt-level = 3
 [dependencies]
 cortex-m = "0.6.3"
 cortex-m-rt = "0.6.12"
-panic_rtt = "0.2.0"
 nb = "1.0.0"
 jlink_rtt = "0.1.0"
 heapless = "0.5.3"
@@ -30,11 +29,8 @@ features = ["stm32f413", "rt"]
 
 [dependencies.components]
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "develop/v0.2"
+branch = "modify/224-uom"
 features = ["debug", "log"]
-
-[dependencies.quantities]
-git = "https://github.com/ikazuya0201/quantities.git"
 
 [dependencies.embedded-hal]
 version = "0.2.3"

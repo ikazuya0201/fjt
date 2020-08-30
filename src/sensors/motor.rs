@@ -1,9 +1,11 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
-use components::sensors::Motor;
+use components::{
+    quantities::{dimensionless::scalar, f32::Voltage, voltage::volt},
+    sensors::Motor,
+};
 use embedded_hal::PwmPin;
-use quantities::{Quantity, Voltage};
 
 pub trait Voltmeter {
     fn get_voltage(&mut self) -> Voltage;
@@ -43,8 +45,8 @@ where
 {
     fn apply(&mut self, voltage: Voltage) {
         let battery_voltage = self.battery_voltmeter.borrow_mut().get_voltage();
-        if voltage.is_positive() {
-            let mut ratio = voltage / battery_voltage;
+        if voltage.get::<volt>() > 0.0 {
+            let mut ratio = (voltage / battery_voltage).get::<scalar>();
             if ratio > 1.0 {
                 ratio = 1.0;
             }
@@ -52,7 +54,7 @@ where
                 .set_duty(((1.0 - ratio) * self.pwm_pin1.get_max_duty() as f32) as u16);
             self.pwm_pin2.set_duty(self.pwm_pin2.get_max_duty());
         } else {
-            let mut ratio = -(voltage / battery_voltage);
+            let mut ratio = -(voltage / battery_voltage).get::<scalar>();
             if ratio > 1.0 {
                 ratio = 1.0;
             }

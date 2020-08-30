@@ -1,11 +1,22 @@
 use core::convert::Infallible;
 
+<<<<<<< HEAD
 use components::sensors::IMU;
+=======
+use components::{
+    quantities::{
+        acceleration::{gravity, meter_per_second_squared},
+        f32::{Acceleration, AngularVelocity},
+        frequency::{degree_per_second, radian_per_second},
+    },
+    sensors::IMU,
+    utils::vector::Vector3,
+};
+>>>>>>> 9a032f6... [update] Modified to use uom quantities.
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
 use nb::block;
-use quantities::{Acceleration, AngularSpeed};
 use stm32f4xx_hal::spi::Error as SpiError;
 
 use crate::wait_ok;
@@ -115,7 +126,7 @@ where
         let mut gyro_offset_sum = AngularSpeed::default();
         for _ in 0..Self::CALIBRATION_NUM {
             let accel = block!(self.get_translational_acceleration())?;
-            let gyro = block!(self.get_angular_speed())?;
+            let gyro = block!(self.get_angular_velocity())?;
             accel_offset_sum += accel;
             gyro_offset_sum += gyro;
             block!(timer.wait()).ok();
@@ -184,15 +195,16 @@ where
         ((higher as u16) << 8 | lower as u16) as i16
     }
 
-    fn convert_raw_data_to_angular_speed(&mut self, gyro_value: i16) -> AngularSpeed {
-        let raw_angular_speed =
-            AngularSpeed::from_degree_per_second((gyro_value as f32) / (core::i16::MAX as f32));
-        Self::GYRO_RATIO * raw_angular_speed
+    fn convert_raw_data_to_angular_velocity(&mut self, gyro_value: i16) -> AngularVelocity {
+        let raw_angular_velocity = AngularVelocity::new::<degree_per_second>(
+            (gyro_value as f32) / (core::i16::MAX as f32),
+        );
+        Self::GYRO_RATIO * raw_angular_velocity
     }
 
     fn convert_raw_data_to_acceleration(&mut self, accel_value: i16) -> Acceleration {
         let raw_acceleration =
-            Acceleration::from_gravity((accel_value as f32) / (core::i16::MAX as f32));
+            Acceleration::new::<gravity>((accel_value as f32) / (core::i16::MAX as f32));
         Self::ACCEL_RATIO * raw_acceleration
     }
 }
@@ -205,7 +217,7 @@ where
 {
     type Error = IMUError;
 
-    fn get_angular_speed(&mut self) -> nb::Result<AngularSpeed, Self::Error> {
+    fn get_angular_speed(&mut self) -> nb::Result<AngularVelocity, Self::Error> {
         let mut buffer = [0; 3];
         let buffer = self.read_from_registers(Self::RA_GYRO_Z_OUT_H, &mut buffer)?;
         Ok(

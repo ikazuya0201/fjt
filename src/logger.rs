@@ -3,6 +3,7 @@ use core::cell::RefCell;
 
 use components::{
     data_types::{State, Target},
+    quantities::length::meter,
     traits::Logger,
 };
 use heapless::{ArrayLength, Vec};
@@ -35,10 +36,10 @@ where
         self.vec
             .borrow_mut()
             .push((
-                target.x.x.as_meters(),
-                target.y.x.as_meters(),
-                state.x.x.as_meters(),
-                state.y.x.as_meters(),
+                target.x.x.get::<meter>(),
+                target.y.x.get::<meter>(),
+                state.x.x.get::<meter>(),
+                state.y.x.get::<meter>(),
             ))
             .ok(); //ignore error
     }

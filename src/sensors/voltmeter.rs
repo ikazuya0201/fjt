@@ -1,8 +1,12 @@
 use core::marker::PhantomData;
 
+use components::quantities::{
+    dimensionless::scalar,
+    f32::{Frequency, Time, Voltage},
+    voltage::volt,
+};
 use embedded_hal::adc::{Channel, OneShot};
 use nb::block;
-use quantities::{Frequency, Time, Voltage};
 
 use super::Voltmeter;
 
@@ -25,16 +29,21 @@ where
     <T as OneShot<ADC, u16, PIN>>::Error: core::fmt::Debug,
 {
     const RATIO: f32 = 3.0;
-    const AVDD_VOLTAGE: Voltage = Voltage::from_volts(3.3);
+    const AVDD_VOLTAGE: Voltage = Voltage {
+        dimension: PhantomData,
+        units: PhantomData,
+        value: 3.3,
+    };
     const MAX_ADC_VALUE: f32 = 4096.0;
     const SUM_NUM: u16 = 100;
 
     pub fn new(adc: T, adc_pin: PIN, period: Time, cut_off_frequency: Frequency) -> Self {
-        let alpha = 1.0 / (2.0 * core::f32::consts::PI * period * cut_off_frequency + 1.0);
+        let alpha = 1.0
+            / (2.0 * core::f32::consts::PI * (period * cut_off_frequency).get::<scalar>() + 1.0);
         let mut voltmeter = Self {
             adc,
             adc_pin,
-            voltage: Voltage::from_volts(0.0),
+            voltage: Voltage::new::<volt>(0.0),
             alpha,
             _adc_marker: PhantomData,
         };

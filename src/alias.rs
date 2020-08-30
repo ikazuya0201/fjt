@@ -1,10 +1,10 @@
 use components::{
     data_types::Pose,
     defaults::{DefaultAgent, DefaultMaze, DefaultSearchOperator, DefaultSolver},
+    quantities::f32::Length,
     sensors::DistanceSensor,
     utils::sample::Sample,
 };
-use quantities::Distance;
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -78,7 +78,7 @@ impl DistanceSensor for DistanceSensors {
         }
     }
 
-    fn get_distance(&mut self) -> nb::Result<Sample<Distance>, VL6180XError> {
+    fn get_distance(&mut self) -> nb::Result<Sample<Length>, VL6180XError> {
         use DistanceSensors::*;
         match self {
             Front(front) => front.get_distance(),

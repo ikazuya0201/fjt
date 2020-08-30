@@ -1,6 +1,11 @@
-use components::sensors::Encoder;
+use components::{
+    quantities::{
+        dimensionless::revolution,
+        f32::{Angle, Length},
+    },
+    sensors::Encoder,
+};
 use embedded_hal::Qei;
-use quantities::{Angle, Distance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncoderError;
@@ -10,7 +15,7 @@ where
     Q: Qei,
 {
     qei: Q,
-    wheel_radius: Distance,
+    wheel_radius: Length,
     before_count: u16,
 }
 
@@ -20,7 +25,7 @@ where
 {
     const RESOLUTION_PER_ROTATION: f32 = 1024.0;
 
-    pub fn new(qei: Q, wheel_radius: Distance) -> Self {
+    pub fn new(qei: Q, wheel_radius: Length) -> Self {
         Self {
             qei,
             wheel_radius,
@@ -41,7 +46,7 @@ where
 {
     type Error = EncoderError;
 
-    fn get_relative_distance(&mut self) -> nb::Result<Distance, EncoderError> {
+    fn get_relative_distance(&mut self) -> nb::Result<Length, EncoderError> {
         let after_count = self.get_lower_bits(self.qei.count().into());
         let relative_count = if after_count > self.before_count {
             (after_count - self.before_count) as i16
@@ -50,7 +55,7 @@ where
         };
         self.before_count = after_count;
         Ok(
-            -Angle::from_rotation(relative_count as f32 / Self::RESOLUTION_PER_ROTATION)
+            -Angle::new::<revolution>(relative_count as f32 / Self::RESOLUTION_PER_ROTATION)
                 * self.wheel_radius,
         )
     }
