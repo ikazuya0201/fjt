@@ -1,23 +1,14 @@
 use core::convert::Infallible;
 use core::marker::PhantomData;
 
-use components::{
-    quantities::{
-        acceleration::{gravity, meter_per_second_squared},
-        f32::{Acceleration, AngularVelocity},
-        frequency::{degree_per_second, radian_per_second},
-    },
-    sensors::IMU,
-    utils::vector::Vector3,
-};
+use components::sensors::IMU;
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
 use nb::block;
 use stm32f4xx_hal::spi::Error as SpiError;
 use uom::si::{
-    acceleration::meter_per_second_squared,
-    angular_velocity::{degree_per_second, radian_per_second},
+    angular_velocity::degree_per_second,
     f32::{Acceleration, AngularVelocity},
 };
 
@@ -42,7 +33,7 @@ pub struct ICM20648<T, U> {
     pub spi: T,
     cs: U,
     accel_offset: Acceleration,
-    gyro_offset: AngularSpeed,
+    gyro_offset: AngularVelocity,
 }
 
 impl<T, U> ICM20648<T, U>
@@ -130,7 +121,7 @@ where
         W: CountDown,
     {
         let mut accel_offset_sum = Acceleration::default();
-        let mut gyro_offset_sum = AngularSpeed::default();
+        let mut gyro_offset_sum = AngularVelocity::default();
         for _ in 0..Self::CALIBRATION_NUM {
             let accel = block!(self.get_translational_acceleration())?;
             let gyro = block!(self.get_angular_velocity())?;
@@ -224,11 +215,11 @@ where
 {
     type Error = IMUError;
 
-    fn get_angular_speed(&mut self) -> nb::Result<AngularVelocity, Self::Error> {
+    fn get_angular_velocity(&mut self) -> nb::Result<AngularVelocity, Self::Error> {
         let mut buffer = [0; 3];
         let buffer = self.read_from_registers(Self::RA_GYRO_Z_OUT_H, &mut buffer)?;
         Ok(
-            self.convert_raw_data_to_angular_speed(self.connect_raw_data(buffer[0], buffer[1]))
+            self.convert_raw_data_to_angular_velocity(self.connect_raw_data(buffer[0], buffer[1]))
                 - self.gyro_offset,
         )
     }
