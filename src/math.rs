@@ -1,3 +1,5 @@
+use core::f32::consts::PI;
+
 use components::traits::Math as TMath;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,11 +11,13 @@ impl TMath for Math {
     }
 
     fn sinf(val: f32) -> f32 {
-        libm::sinf(val)
+        let val = Self::rem_euclidf(val, PI);
+        unsafe { crate::bindings::arm_sin_f32(val) }
     }
 
     fn cosf(val: f32) -> f32 {
-        libm::cosf(val)
+        let val = Self::rem_euclidf(val, PI);
+        unsafe { crate::bindings::arm_cos_f32(val) }
     }
 
     fn expf(val: f32) -> f32 {

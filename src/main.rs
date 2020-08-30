@@ -7,6 +7,7 @@ extern crate typenum;
 
 extern crate alloc;
 mod alias;
+mod bindings;
 mod init;
 mod logger;
 mod macros;
