@@ -219,7 +219,7 @@ where
         let buffer = self.read_from_registers(Self::RA_ACCEL_Y_OUT_H, &mut buffer)?;
         Ok(
             -self.convert_raw_data_to_acceleration(self.connect_raw_data(buffer[0], buffer[1]))
-                + self.accel_offset,
+                - self.accel_offset,
         )
     }
 }
