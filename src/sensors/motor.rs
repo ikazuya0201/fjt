@@ -1,14 +1,12 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
-use components::{
-    quantities::{dimensionless::scalar, f32::Voltage, voltage::volt},
-    sensors::Motor,
-};
+use components::sensors::Motor;
 use embedded_hal::PwmPin;
+use uom::si::{electric_potential::volt, f32::ElectricPotential, ratio::ratio};
 
 pub trait Voltmeter {
-    fn get_voltage(&mut self) -> Voltage;
+    fn get_voltage(&mut self) -> ElectricPotential;
 }
 
 pub struct IMotor<P1, P2, V>
@@ -43,24 +41,24 @@ where
     P2: PwmPin<Duty = u16>,
     V: Voltmeter,
 {
-    fn apply(&mut self, voltage: Voltage) {
+    fn apply(&mut self, voltage: ElectricPotential) {
         let battery_voltage = self.battery_voltmeter.borrow_mut().get_voltage();
         if voltage.get::<volt>() > 0.0 {
-            let mut ratio = (voltage / battery_voltage).get::<scalar>();
-            if ratio > 1.0 {
-                ratio = 1.0;
+            let mut duty_ratio = (voltage / battery_voltage).get::<ratio>();
+            if duty_ratio > 1.0 {
+                duty_ratio = 1.0;
             }
             self.pwm_pin1
-                .set_duty(((1.0 - ratio) * self.pwm_pin1.get_max_duty() as f32) as u16);
+                .set_duty(((1.0 - duty_ratio) * self.pwm_pin1.get_max_duty() as f32) as u16);
             self.pwm_pin2.set_duty(self.pwm_pin2.get_max_duty());
         } else {
-            let mut ratio = -(voltage / battery_voltage).get::<scalar>();
-            if ratio > 1.0 {
-                ratio = 1.0;
+            let mut duty_ratio = -(voltage / battery_voltage).get::<ratio>();
+            if duty_ratio > 1.0 {
+                duty_ratio = 1.0;
             }
             self.pwm_pin1.set_duty(self.pwm_pin1.get_max_duty());
             self.pwm_pin2
-                .set_duty(((1.0 - ratio) * self.pwm_pin2.get_max_duty() as f32) as u16);
+                .set_duty(((1.0 - duty_ratio) * self.pwm_pin2.get_max_duty() as f32) as u16);
         }
     }
 }

@@ -1,8 +1,6 @@
 use core::convert::Infallible;
+use core::marker::PhantomData;
 
-<<<<<<< HEAD
-use components::sensors::IMU;
-=======
 use components::{
     quantities::{
         acceleration::{gravity, meter_per_second_squared},
@@ -12,12 +10,16 @@ use components::{
     sensors::IMU,
     utils::vector::Vector3,
 };
->>>>>>> 9a032f6... [update] Modified to use uom quantities.
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
 use nb::block;
 use stm32f4xx_hal::spi::Error as SpiError;
+use uom::si::{
+    acceleration::meter_per_second_squared,
+    angular_velocity::{degree_per_second, radian_per_second},
+    f32::{Acceleration, AngularVelocity},
+};
 
 use crate::wait_ok;
 
@@ -68,6 +70,11 @@ where
 
     const ACCEL_RATIO: f32 = 2.0;
     const GYRO_RATIO: f32 = 1000.0;
+    const GRAVITY_ACCELERATION: Acceleration = Acceleration {
+        dimension: PhantomData,
+        units: PhantomData,
+        value: 9.80665,
+    };
 
     const CALIBRATION_NUM: u16 = 1000;
 
@@ -204,7 +211,7 @@ where
 
     fn convert_raw_data_to_acceleration(&mut self, accel_value: i16) -> Acceleration {
         let raw_acceleration =
-            Acceleration::new::<gravity>((accel_value as f32) / (core::i16::MAX as f32));
+            Self::GRAVITY_ACCELERATION * (accel_value as f32) / (core::i16::MAX as f32);
         Self::ACCEL_RATIO * raw_acceleration
     }
 }

@@ -1,11 +1,9 @@
-use components::{
-    quantities::{
-        dimensionless::revolution,
-        f32::{Angle, Length},
-    },
-    sensors::Encoder,
-};
+use components::sensors::Encoder;
 use embedded_hal::Qei;
+use uom::si::{
+    angle::revolution,
+    f32::{Angle, Length},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncoderError;

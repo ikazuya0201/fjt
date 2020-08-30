@@ -3,10 +3,10 @@ use core::cell::RefCell;
 
 use components::{
     data_types::{State, Target},
-    quantities::length::meter,
     traits::Logger,
 };
 use heapless::{ArrayLength, Vec};
+use uom::si::length::meter;
 
 pub type LogData = (f32, f32, f32, f32);
 

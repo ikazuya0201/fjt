@@ -9,21 +9,6 @@ use components::{
         EstimatorBuilder, MazeBuilder, ObstacleDetector, RotationControllerBuilder, TrackerBuilder,
         TrajectoryGeneratorBuilder, TranslationControllerBuilder,
     },
-    quantities::{
-        acceleration::meter_per_second_squared,
-        cubed_frequency::radian_per_second_cubed,
-        dimensionless::degree,
-        f32::{
-            Acceleration, Angle, AngularAcceleration, AngularJerk, AngularVelocity, Frequency,
-            Jerk, Length, Time, Velocity,
-        },
-        frequency::{hertz, radian_per_second},
-        jerk::meter_per_second_cubed,
-        length::meter,
-        squared_frequency::radian_per_second_squared,
-        time::second,
-        velocity::meter_per_second,
-    },
 };
 use cortex_m::interrupt::free;
 use embedded_hal::prelude::*;
@@ -40,6 +25,22 @@ use stm32f4xx_hal::{
     spi::Spi,
     stm32,
     timer::{Event, Timer},
+};
+use uom::si::{
+    acceleration::meter_per_second_squared,
+    angle::degree,
+    angular_acceleration::radian_per_second_squared,
+    angular_jerk::radian_per_second_cubed,
+    angular_velocity::radian_per_second,
+    f32::{
+        Acceleration, Angle, AngularAcceleration, AngularJerk, AngularVelocity, Frequency, Jerk,
+        Length, Time, Velocity,
+    },
+    frequency::hertz,
+    jerk::meter_per_second_cubed,
+    length::meter,
+    time::second,
+    velocity::meter_per_second,
 };
 
 use crate::alias::{Agent, DistanceSensors, Maze, MazeWidth, SearchOperator, Solver, Voltmeter};

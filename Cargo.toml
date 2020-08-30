@@ -19,6 +19,11 @@ typenum = "1.12.0"
 generic-array = "0.13.2"
 alloc-cortex-m = "0.4.0"
 
+[dependencies.uom]
+version = "0.29.0"
+default-features = false
+features = ["si", "f32", "autoconvert"]
+
 [dependencies.lazy_static]
 version = "1.4.0"
 features = ["spin_no_std"]

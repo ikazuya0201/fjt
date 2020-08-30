@@ -1,12 +1,12 @@
 use core::marker::PhantomData;
 
-use components::quantities::{
-    dimensionless::scalar,
-    f32::{Frequency, Time, Voltage},
-    voltage::volt,
-};
 use embedded_hal::adc::{Channel, OneShot};
 use nb::block;
+use uom::si::{
+    electric_potential::volt,
+    f32::{ElectricPotential, Frequency, Time},
+    ratio::ratio,
+};
 
 use super::Voltmeter;
 
@@ -17,7 +17,7 @@ where
 {
     adc: T,
     adc_pin: PIN,
-    voltage: Voltage,
+    voltage: ElectricPotential,
     alpha: f32,
     _adc_marker: PhantomData<ADC>,
 }
@@ -29,7 +29,7 @@ where
     <T as OneShot<ADC, u16, PIN>>::Error: core::fmt::Debug,
 {
     const RATIO: f32 = 3.0;
-    const AVDD_VOLTAGE: Voltage = Voltage {
+    const AVDD_VOLTAGE: ElectricPotential = ElectricPotential {
         dimension: PhantomData,
         units: PhantomData,
         value: 3.3,
@@ -38,17 +38,17 @@ where
     const SUM_NUM: u16 = 100;
 
     pub fn new(adc: T, adc_pin: PIN, period: Time, cut_off_frequency: Frequency) -> Self {
-        let alpha = 1.0
-            / (2.0 * core::f32::consts::PI * (period * cut_off_frequency).get::<scalar>() + 1.0);
+        let alpha =
+            1.0 / (2.0 * core::f32::consts::PI * (period * cut_off_frequency).get::<ratio>() + 1.0);
         let mut voltmeter = Self {
             adc,
             adc_pin,
-            voltage: Voltage::new::<volt>(0.0),
+            voltage: ElectricPotential::new::<volt>(0.0),
             alpha,
             _adc_marker: PhantomData,
         };
 
-        let mut sum = Voltage::default();
+        let mut sum = ElectricPotential::default();
         for _ in 0..Self::SUM_NUM {
             sum += voltmeter.get_current_voltage();
         }
@@ -61,7 +61,7 @@ where
         self.voltage = self.alpha * self.voltage + (1.0 - self.alpha) * self.get_current_voltage();
     }
 
-    pub fn get_current_voltage(&mut self) -> Voltage {
+    pub fn get_current_voltage(&mut self) -> ElectricPotential {
         let value = block!(self.adc.read(&mut self.adc_pin)).unwrap() as f32;
         value * Self::AVDD_VOLTAGE * Self::RATIO / Self::MAX_ADC_VALUE
     }
@@ -73,7 +73,7 @@ where
     PIN: Channel<ADC>,
     <T as OneShot<ADC, u16, PIN>>::Error: core::fmt::Debug,
 {
-    fn get_voltage(&mut self) -> Voltage {
+    fn get_voltage(&mut self) -> ElectricPotential {
         // self.update_voltage();
         self.voltage
     }

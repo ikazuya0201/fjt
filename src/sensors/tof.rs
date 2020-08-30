@@ -3,18 +3,14 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use crate::wait_ok;
-use components::{
-    data_types::Pose,
-    quantities::{f32::Length, length::meter},
-    sensors::DistanceSensor,
-    utils::sample::Sample,
-};
+use components::{data_types::Pose, sensors::DistanceSensor, utils::sample::Sample};
 use embedded_hal::{
     blocking::delay::DelayMs,
     blocking::i2c::{Write, WriteRead},
     digital::v2::OutputPin,
 };
 use nb::block;
+use uom::si::{f32::Length, length::meter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {

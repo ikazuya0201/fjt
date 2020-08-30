@@ -1,7 +1,6 @@
 use components::{
     data_types::Pose,
     defaults::{DefaultAgent, DefaultMaze, DefaultSearchOperator, DefaultSolver},
-    quantities::f32::Length,
     sensors::DistanceSensor,
     utils::sample::Sample,
 };
@@ -21,6 +20,7 @@ use stm32f4xx_hal::{
     stm32::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4},
 };
 use typenum::consts::*;
+use uom::si::f32::Length;
 
 use crate::sensors::{IMotor, IVoltmeter, VL6180XError, ICM20648, MA702GQ, VL6180X};
 

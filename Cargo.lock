@@ -187,6 +187,7 @@ dependencies = [
  "nb 1.0.0",
  "stm32f4xx-hal",
  "typenum",
+ "uom",
 ]
 
 [[package]]
