@@ -1,4 +1,4 @@
-use core::f32::consts::PI;
+use core::f32::consts::TAU;
 
 use components::traits::Math as TMath;
 
@@ -11,12 +11,12 @@ impl TMath for Math {
     }
 
     fn sinf(val: f32) -> f32 {
-        let val = Self::rem_euclidf(val, PI);
+        let val = Self::rem_euclidf(val, TAU);
         unsafe { crate::bindings::arm_sin_f32(val) }
     }
 
     fn cosf(val: f32) -> f32 {
-        let val = Self::rem_euclidf(val, PI);
+        let val = Self::rem_euclidf(val, TAU);
         unsafe { crate::bindings::arm_cos_f32(val) }
     }
 
@@ -29,6 +29,11 @@ impl TMath for Math {
     }
 
     fn rem_euclidf(lhs: f32, rhs: f32) -> f32 {
-        libm::fmodf(lhs, rhs)
+        let rem = libm::remainderf(lhs, rhs);
+        if rem.is_sign_negative() {
+            rhs + rem
+        } else {
+            rem
+        }
     }
 }
