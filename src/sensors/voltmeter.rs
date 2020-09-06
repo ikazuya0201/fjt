@@ -28,7 +28,7 @@ where
     PIN: Channel<ADC>,
     <T as OneShot<ADC, u16, PIN>>::Error: core::fmt::Debug,
 {
-    const RATIO: f32 = 3.0;
+    const RATIO: f32 = 1.9;
     const AVDD_VOLTAGE: ElectricPotential = ElectricPotential {
         dimension: PhantomData,
         units: PhantomData,
