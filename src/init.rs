@@ -107,8 +107,8 @@ pub fn init_storage() -> Storage {
 
     let wheel_radius = Length::new::<meter>(0.00675);
 
-    let period = Time::new::<second>(0.001);
-    let mut timer = Timer::tim5(device_peripherals.TIM5, 1.khz(), clocks);
+    let period = Time::new::<second>(0.0025);
+    let mut timer = Timer::tim5(device_peripherals.TIM5, 400.hz(), clocks);
 
     let voltmeter = {
         let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());
@@ -190,7 +190,7 @@ pub fn init_storage() -> Storage {
                 .initial_posture(Angle::new::<degree>(90.0))
                 .initial_x(Length::new::<meter>(0.045))
                 .initial_y(Length::new::<meter>(0.045))
-                // .wheel_interval(Length::new::<meter>(0.0335))
+                .wheel_interval(Length::new::<meter>(0.0335))
                 .build()
         };
 
@@ -238,9 +238,9 @@ pub fn init_storage() -> Storage {
                 .left_motor(left_motor)
                 .period(period)
                 .kx(40.0)
-                .kdx(4.0)
+                .kdx(0.0)
                 .ky(40.0)
-                .kdy(4.0)
+                .kdy(0.0)
                 .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.03))
                 .translation_controller(trans_controller)
                 .rotation_controller(rot_controller)
@@ -330,6 +330,9 @@ pub fn init_storage() -> Storage {
         MazeBuilder::new()
             .costs(costs as fn(Pattern) -> u16)
             .wall_existence_probability_threshold(0.3)
+            .square_width(Length::new::<meter>(0.09))
+            .wall_width(Length::new::<meter>(0.006))
+            .ignore_radius_from_pillar(Length::new::<meter>(0.03))
             .build::<MazeWidth, Math>(),
     );
 
