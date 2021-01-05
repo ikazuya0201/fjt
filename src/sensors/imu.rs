@@ -97,20 +97,25 @@ where
 
         wait_ok!(block!(self.check_who_am_i())); //wait for who am i checking
 
-        wait_ok!(self.write_to_register(Self::RA_PWR_MGMT_1, 0x01));
+        let mut write = |register: u8, value: u8| {
+            delay.delay_ms(1);
+            wait_ok!(self.write_to_register(register, value));
+        };
 
-        wait_ok!(self.write_to_register(Self::RA_LP_CONFIG, 0x00)); //disable duty cycle mode for gyro
+        write(Self::RA_PWR_MGMT_1, 0x01);
 
-        wait_ok!(self.write_to_register(Self::RA_REG_BANK_SEL, 0x20)); //switch to user bank 2
+        write(Self::RA_LP_CONFIG, 0x00); //disable duty cycle mode for gyro
+
+        write(Self::RA_REG_BANK_SEL, 0x20); //switch to user bank 2
 
         //configure gryo to +-1000dps in full scale
-        wait_ok!(self.write_to_register(Self::RA_GYRO_CONFIG_1, 0x04));
+        write(Self::RA_GYRO_CONFIG_1, 0x04);
 
         //disable digital low path filter
         //configure accelerometer to +-2g
-        wait_ok!(self.write_to_register(Self::RA_ACCEL_CONFIG, 0x00));
+        write(Self::RA_ACCEL_CONFIG, 0x00);
 
-        wait_ok!(self.write_to_register(Self::RA_REG_BANK_SEL, 0x00)); //switch to user bank 0
+        write(Self::RA_REG_BANK_SEL, 0x00); //switch to user bank 0
 
         wait_ok!(self.calibrate(timer));
         wait_ok!(self.calibrate(timer));
