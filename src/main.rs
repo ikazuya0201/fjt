@@ -55,7 +55,7 @@ fn TIM5() {
         if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
             tim5.clear_interrupt(Event::TimeOut);
         }
-        BAG.run_operator.tick().expect("Should panic");
+        BAG.operator.tick().expect("Should panic");
     });
 }
 
@@ -65,7 +65,7 @@ fn main() -> ! {
     let size = 128; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
-    BAG.run_operator.run().ok();
+    BAG.operator.run().ok();
 
     free(|_cs| {
         cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
@@ -76,7 +76,7 @@ fn main() -> ! {
     });
 
     loop {
-        BAG.run_operator.run().ok();
+        BAG.operator.run().ok();
     }
 }
 

@@ -4,11 +4,12 @@ use core::f32::consts::PI;
 use core::fmt::Write;
 
 use components::{
-    data_types::{AbsoluteDirection, Pattern, Pose, SearchKind},
+    data_types::{AbsoluteDirection, AngleState, LengthState, Pattern, Pose, SearchKind, State},
     impls::{
-        slalom_parameters_map, CommandConverter, EstimatorBuilder, Maze, NullLogger,
-        ObstacleDetector, PoseConverter, RotationControllerBuilder, TrackerBuilder,
-        TrajectoryGeneratorBuilder, TranslationControllerBuilder, WallConverter, WallManager,
+        slalom_parameters_map2, CommandConverter2, EstimatorBuilder, Maze, NullLogger,
+        ObstacleDetector, PoseConverter, RotationControllerBuilder, SearchAgent,
+        SearchTrajectoryGeneratorBuilder, TrackerBuilder, TranslationControllerBuilder,
+        WallConverter, WallManager,
     },
     utils::probability::Probability,
 };
@@ -31,21 +32,21 @@ use stm32f4xx_hal::{
 use uom::si::{
     acceleration::meter_per_second_squared,
     angle::degree,
-    angular_acceleration::radian_per_second_squared,
-    angular_jerk::radian_per_second_cubed,
-    angular_velocity::radian_per_second,
+    angular_acceleration::{degree_per_second_squared, radian_per_second_squared},
+    angular_jerk::{degree_per_second_cubed, radian_per_second_cubed},
+    angular_velocity::{degree_per_second, radian_per_second},
     f32::{
         Acceleration, Angle, AngularAcceleration, AngularJerk, AngularVelocity, Frequency, Jerk,
         Length, Time, Velocity,
     },
     frequency::hertz,
     jerk::meter_per_second_cubed,
-    length::meter,
+    length::{meter, millimeter},
     time::second,
     velocity::meter_per_second,
 };
 
-use crate::alias::{Commander, DistanceSensors, RunAgent, RunNode, RunOperator, Voltmeter};
+use crate::alias::{DistanceSensors, RunNode, SearchCommander, SearchOperator, Voltmeter};
 use crate::logger::{ILogger, Log};
 use crate::sensors::{IMotor, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
@@ -71,7 +72,8 @@ type LogSize = U0;
 type Logger = ILogger<LogSize>;
 
 pub struct Bag {
-    pub run_operator: RunOperator<NullLogger>,
+    // pub run_operator: RunOperator<NullLogger>,
+    pub operator: SearchOperator<NullLogger>,
     pub log: Rc<RefCell<Option<Log<LogSize>>>>,
 }
 
@@ -180,16 +182,29 @@ pub fn init_bag() -> Bag {
             };
 
             EstimatorBuilder::new()
+                .correction_weight(0.2)
                 .left_encoder(left_encoder)
                 .right_encoder(right_encoder)
                 .imu(imu)
                 .period(period)
                 .cut_off_frequency(Frequency::new::<hertz>(50.0))
-                .initial_posture(Angle::new::<degree>(90.0))
-                .initial_x(Length::new::<meter>(0.045))
-                .initial_y(Length::new::<meter>(0.045))
+                .initial_state(State {
+                    x: LengthState {
+                        x: Length::new::<meter>(0.045),
+                        ..Default::default()
+                    },
+                    y: LengthState {
+                        x: Length::new::<meter>(0.045),
+                        ..Default::default()
+                    },
+                    theta: AngleState {
+                        x: Angle::new::<degree>(90.0),
+                        ..Default::default()
+                    },
+                })
                 .wheel_interval(Length::new::<meter>(0.0335))
                 .build()
+                .expect("Build failed")
         };
 
         let tracker = {
@@ -248,22 +263,28 @@ pub fn init_bag() -> Bag {
                 .build()
         };
 
-        let search_velocity = Velocity::new::<meter_per_second>(0.12);
+        let search_velocity = Velocity::new::<meter_per_second>(0.15);
 
-        let trajectory_generator = TrajectoryGeneratorBuilder::new()
+        let trajectory_generator = SearchTrajectoryGeneratorBuilder::new()
+            .front_offset(Length::new::<millimeter>(10.0))
             .period(period)
-            .max_velocity(Velocity::new::<meter_per_second>(1.0))
-            .max_acceleration(Acceleration::new::<meter_per_second_squared>(0.5))
-            .max_jerk(Jerk::new::<meter_per_second_cubed>(1.0))
+            .max_velocity(search_velocity)
+            .max_acceleration(Acceleration::new::<meter_per_second_squared>(2.0))
+            .max_jerk(Jerk::new::<meter_per_second_cubed>(4.0))
             .search_velocity(search_velocity)
-            .slalom_parameters_map(slalom_parameters_map)
+            .slalom_parameters_map(slalom_parameters_map2)
             .angular_velocity_ref(AngularVelocity::new::<radian_per_second>(3.0 * PI))
             .angular_acceleration_ref(AngularAcceleration::new::<radian_per_second_squared>(
                 36.0 * PI,
             ))
             .angular_jerk_ref(AngularJerk::new::<radian_per_second_cubed>(1200.0 * PI))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.2))
-            .build();
+            .spin_angular_velocity(AngularVelocity::new::<degree_per_second>(180.0))
+            .spin_angular_acceleration(AngularAcceleration::new::<degree_per_second_squared>(
+                1800.0,
+            ))
+            .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(18000.0))
+            .build()
+            .expect("Build failed");
 
         let obstacle_detector = {
             let tof_left = {
@@ -316,24 +337,18 @@ pub fn init_bag() -> Bag {
                 DistanceSensors::Front(tof_front)
             ])
         };
-        RunAgent::new(obstacle_detector, estimator, tracker, trajectory_generator)
+        SearchAgent::new(obstacle_detector, estimator, tracker, trajectory_generator)
     };
     let commander = {
         let existence_threshold = Probability::new(0.1).unwrap();
 
-        let input_str = "+---+---+---+---+
-|               |
-+   +---+---+   +
-|   |       |   |
-+   +   +   +   +
-|   |   |       |
-+   +   +---+   +
-|   |       |   |
-+---+---+---+---+";
-
         use AbsoluteDirection::*;
-        let wall_manager = WallManager::with_str(existence_threshold, input_str);
-        let pose_converter = PoseConverter::default();
+        let wall_manager = WallManager::new(existence_threshold);
+        let pose_converter = PoseConverter::new(
+            Length::new::<millimeter>(90.0),
+            Length::new::<millimeter>(6.0),
+            Length::new::<millimeter>(15.0),
+        );
         let wall_converter = WallConverter::new(costs);
         let maze = Maze::new(wall_manager, pose_converter, wall_converter);
         let start = RunNode::new(0, 0, North, costs).unwrap();
@@ -342,15 +357,21 @@ pub fn init_bag() -> Bag {
             RunNode::new(2, 0, South, costs).unwrap(),
             RunNode::new(2, 0, West, costs).unwrap(),
         ];
-        Commander::new(start, goals, SearchKind::Init, SearchKind::Final, maze)
+        SearchCommander::new(start, goals, SearchKind::Init, SearchKind::Final, maze)
     };
 
     timer.listen(Event::TimeOut);
     free(|cs| {
         TIMER_TIM5.borrow(cs).replace(Some(timer));
     });
+
+    let command_converter = CommandConverter2::new(
+        Length::new::<millimeter>(90.0),
+        Length::new::<millimeter>(10.0),
+    );
     Bag {
-        run_operator: RunOperator::new(agent, commander, CommandConverter::default()),
+        // run_operator: RunOperator::new(agent, commander, CommandConverter::default()),
+        operator: SearchOperator::new(agent, commander, command_converter),
         log: Rc::new(RefCell::new(None)),
     }
 }

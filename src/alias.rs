@@ -85,6 +85,7 @@ impl DistanceSensor for DistanceSensors {
 }
 
 pub type MazeWidth = U4;
+#[allow(unused)]
 pub type MaxSize = op!(MazeWidth * MazeWidth);
 
 pub type RunNode = impls::RunNode<MazeWidth>;
@@ -92,6 +93,7 @@ pub type RunNode = impls::RunNode<MazeWidth>;
 #[allow(unused)]
 pub type SearchNode = impls::SearchNode<MazeWidth>;
 
+#[allow(unused)]
 pub type RunAgent<Logger> = defaults::RunAgent<
     LeftEncoder,
     RightEncoder,
@@ -104,9 +106,22 @@ pub type RunAgent<Logger> = defaults::RunAgent<
     Logger,
 >;
 
-pub type Commander = defaults::Commander<MazeWidth, Math>;
+pub type SearchCommander = defaults::SearchCommander<MazeWidth, Math>;
 
+#[allow(unused)]
 pub type RunOperator<Logger> = defaults::RunOperator<
+    LeftEncoder,
+    RightEncoder,
+    Imu,
+    LeftMotor,
+    RightMotor,
+    DistanceSensors,
+    Math,
+    MazeWidth,
+    Logger,
+>;
+
+pub type SearchOperator<Logger> = defaults::SearchOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
