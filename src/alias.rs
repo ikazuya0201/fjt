@@ -1,9 +1,5 @@
-use components::{
-    data_types::Pose,
-    defaults::{DefaultAgent, DefaultMaze, DefaultSearchOperator, DefaultSolver},
-    sensors::DistanceSensor,
-    utils::sample::Sample,
-};
+use components::{data_types, defaults, sensors::DistanceSensor, utils::sample::Sample};
+use generic_array::GenericArray;
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -70,7 +66,7 @@ pub enum DistanceSensors {
 impl DistanceSensor for DistanceSensors {
     type Error = VL6180XError;
 
-    fn pose(&self) -> Pose {
+    fn pose(&self) -> data_types::Pose {
         use DistanceSensors::*;
         match self {
             Front(front) => front.pose(),
@@ -94,34 +90,37 @@ pub type DistanceSensorNum = U3;
 pub type MaxSize = op!(U4 * U4 * MazeWidth * MazeWidth);
 pub type GoalSize = U2;
 
-pub type Agent<Logger> = DefaultAgent<
-    LeftMotor,
-    RightMotor,
+pub type RunNode = data_types::RunNode<MazeWidth>;
+
+pub type SearchNode = data_types::SearchNode<MazeWidth>;
+
+pub type RunAgent<Logger> = defaults::RunAgent<
     LeftEncoder,
     RightEncoder,
     Imu,
+    LeftMotor,
+    RightMotor,
     DistanceSensors,
     DistanceSensorNum,
-    Logger,
     Math,
+    MaxSize,
+    Logger,
 >;
 
-#[allow(unused)]
-pub type Maze = DefaultMaze<MazeWidth, Math>;
+pub type Commander = defaults::Commander<MazeWidth, GenericArray<RunNode, GoalSize>, Math, MaxSize>;
 
-pub type Solver = DefaultSolver<MazeWidth, MaxSize, GoalSize>;
-
-pub type SearchOperator<Logger> = DefaultSearchOperator<
-    LeftMotor,
-    RightMotor,
+pub type RunOperator<Logger> = defaults::RunOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
+    LeftMotor,
+    RightMotor,
     DistanceSensors,
     DistanceSensorNum,
-    MazeWidth,
-    MaxSize,
-    GoalSize,
-    Logger,
     Math,
+    MaxSize,
+    (),
+    MazeWidth,
+    GenericArray<RunNode, GoalSize>,
+    Logger,
 >;

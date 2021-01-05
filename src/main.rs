@@ -31,10 +31,10 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 
-use init::{init_storage, Storage};
+use init::{init_bag, Bag};
 
 lazy_static! {
-    static ref STORAGE: Storage = init_storage();
+    static ref BAG: Bag = init_bag();
 }
 
 static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
@@ -46,10 +46,6 @@ static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
 fn panic(info: &PanicInfo) -> ! {
     let mut out = Output::new();
     writeln!(out, "{:?}", info).ok();
-    for ref e in STORAGE.log.borrow().iter() {
-        writeln!(out, "{},{},{},{}", e.0, e.1, e.2, e.3).ok();
-    }
-    writeln!(out, "{:?}", STORAGE.maze).ok();
     loop {}
 }
 
@@ -59,7 +55,7 @@ fn TIM5() {
         if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
             tim5.clear_interrupt(Event::TimeOut);
         }
-        STORAGE.search_operator.tick();
+        BAG.run_operator.tick().expect("Should panic");
     });
 }
 
@@ -69,8 +65,8 @@ fn main() -> ! {
     let size = 40960; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
-    STORAGE.search_operator.init();
-    STORAGE.search_operator.run().ok();
+    BAG.run_operator.init();
+    BAG.run_operator.run().ok();
 
     free(|_cs| {
         cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
@@ -81,7 +77,7 @@ fn main() -> ! {
     });
 
     loop {
-        STORAGE.search_operator.run().ok();
+        BAG.run_operator.run().ok();
     }
 }
 

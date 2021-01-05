@@ -4,11 +4,13 @@ use core::f32::consts::PI;
 use core::fmt::Write;
 
 use components::{
-    data_types::{AbsoluteDirection, NodeId, Pattern, Pose, SearchNodeId},
+    data_types::{AbsoluteDirection, Pattern, Pose},
     impls::{
-        EstimatorBuilder, MazeBuilder, ObstacleDetector, RotationControllerBuilder, TrackerBuilder,
-        TrajectoryGeneratorBuilder, TranslationControllerBuilder,
+        slalom_parameters_map, EstimatorBuilder, Maze, NodeConverter, ObstacleDetector,
+        PoseConverter, RotationControllerBuilder, TrackerBuilder, TrajectoryGeneratorBuilder,
+        TranslationControllerBuilder, WallConverter, WallManager,
     },
+    utils::probability::Probability,
 };
 use cortex_m::interrupt::free;
 use embedded_hal::prelude::*;
@@ -43,9 +45,10 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use crate::alias::{Agent, DistanceSensors, Maze, MazeWidth, SearchOperator, Solver, Voltmeter};
+use crate::alias::{
+    Commander, DistanceSensors, RunAgent, RunNode, RunOperator, SearchNode, Voltmeter,
+};
 use crate::logger::{ILogger, Log};
-use crate::math::Math;
 use crate::sensors::{IMotor, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
 
@@ -65,19 +68,18 @@ fn costs(pattern: Pattern) -> u16 {
     }
 }
 
-type LogSize = U2048;
+type LogSize = U0;
 type Logger = ILogger<LogSize>;
 
-pub struct Storage {
-    pub search_operator: SearchOperator<Logger>,
+pub struct Bag {
+    pub run_operator: RunOperator<Logger>,
     pub log: Rc<RefCell<Log<LogSize>>>,
-    pub maze: Rc<Maze>,
 }
 
-unsafe impl Sync for Storage {}
-unsafe impl Send for Storage {}
+unsafe impl Sync for Bag {}
+unsafe impl Send for Bag {}
 
-pub fn init_storage() -> Storage {
+pub fn init_bag() -> Bag {
     let log = Rc::new(RefCell::new(Log::new()));
     let logger = Logger::new(Rc::clone(&log));
 
@@ -259,12 +261,13 @@ pub fn init_storage() -> Storage {
             .max_acceleration(Acceleration::new::<meter_per_second_squared>(0.7))
             .max_jerk(Jerk::new::<meter_per_second_cubed>(1.0))
             .search_velocity(search_velocity)
-            .slalom_velocity_ref(Velocity::new::<meter_per_second>(0.27178875))
+            .slalom_parameters_map(slalom_parameters_map)
             .angular_velocity_ref(AngularVelocity::new::<radian_per_second>(3.0 * PI))
             .angular_acceleration_ref(AngularAcceleration::new::<radian_per_second_squared>(
                 36.0 * PI,
             ))
             .angular_jerk_ref(AngularJerk::new::<radian_per_second_cubed>(1200.0 * PI))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(1.0))
             .build();
 
         let obstacle_detector = {
@@ -318,49 +321,54 @@ pub fn init_storage() -> Storage {
                 DistanceSensors::Front(tof_front)
             ])
         };
-        Rc::new(Agent::new(
+        Rc::new(RunAgent::new(
             obstacle_detector,
             estimator,
             tracker,
             trajectory_generator,
         ))
     };
+    let commander = {
+        let existence_threshold = Probability::new(0.1).unwrap();
 
-    let maze = Rc::new(
-        MazeBuilder::new()
-            .costs(costs as fn(Pattern) -> u16)
-            .wall_existence_probability_threshold(0.3)
-            .square_width(Length::new::<meter>(0.09))
-            .wall_width(Length::new::<meter>(0.006))
-            .ignore_radius_from_pillar(Length::new::<meter>(0.03))
-            .build::<MazeWidth, Math>(),
-    );
+        let input_str = "+---+---+---+---+
+|               |
++   +---+---+   +
+|   |       |   |
++   +   +   +   +
+|   |   |       |
++   +   +---+   +
+|   |       |   |
++---+---+---+---+";
 
-    let solver = Rc::new(Solver::new(
-        NodeId::new(0, 0, AbsoluteDirection::North).unwrap(),
-        arr![
-            NodeId<MazeWidth>;
-            NodeId::new(2,0,AbsoluteDirection::South).unwrap(),
-            NodeId::new(2,0,AbsoluteDirection::West).unwrap()
-        ],
-    ));
+        use AbsoluteDirection::*;
+        let wall_manager = WallManager::with_str(existence_threshold, input_str);
+        let pose_converter = PoseConverter::default();
+        let wall_converter = WallConverter::new(costs);
+        let maze = Maze::new(wall_manager, pose_converter, wall_converter);
+        let start = RunNode::new(0, 0, North, costs).unwrap();
+        let goals = arr![
+            RunNode;
+            RunNode::new(2, 0, South, costs).unwrap(),
+            RunNode::new(2, 0, West, costs).unwrap(),
+        ];
+        let search_start = SearchNode::new(0, 1, North, costs).unwrap();
+        let node_converter = NodeConverter::default();
+        Rc::new(Commander::new(
+            start,
+            goals,
+            search_start,
+            maze,
+            node_converter,
+        ))
+    };
+
     timer.listen(Event::TimeOut);
     free(|cs| {
         TIMER_TIM5.borrow(cs).replace(Some(timer));
     });
-    Storage {
-        search_operator: SearchOperator::new(
-            Pose::new(
-                Length::new::<meter>(0.045),
-                Length::new::<meter>(0.045),
-                Angle::new::<degree>(90.0),
-            ),
-            SearchNodeId::new(0, 1, AbsoluteDirection::North).unwrap(),
-            Rc::clone(&maze),
-            agent,
-            solver,
-        ),
+    Bag {
+        run_operator: RunOperator::new((), Rc::clone(&agent), Rc::clone(&commander)),
         log,
-        maze,
     }
 }
