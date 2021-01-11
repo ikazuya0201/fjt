@@ -20,7 +20,7 @@ generic-array = "0.13.2"
 alloc-cortex-m = "0.4.0"
 
 [dependencies.uom]
-version = "0.29.0"
+version = "0.30.0"
 default-features = false
 features = ["si", "f32", "autoconvert"]
 
@@ -33,9 +33,9 @@ version = "0.8.3"
 features = ["stm32f413", "rt"]
 
 [dependencies.components]
+version = "0.1.0"
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "develop/v0.3"
-features = ["debug", "log"]
+branch = "develop"
 
 [dependencies.embedded-hal]
 version = "0.2.3"
