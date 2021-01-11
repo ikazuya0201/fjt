@@ -35,7 +35,7 @@ features = ["stm32f413", "rt"]
 [dependencies.components]
 version = "0.1.0"
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "feature/340-remove-old-impls"
+branch = "develop"
 
 [dependencies.embedded-hal]
 version = "0.2.3"

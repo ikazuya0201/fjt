@@ -1,5 +1,4 @@
-use components::{data_types, defaults, sensors::DistanceSensor, utils::sample::Sample};
-use generic_array::GenericArray;
+use components::{data_types, defaults, impls, sensors::DistanceSensor, utils::sample::Sample};
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -86,13 +85,12 @@ impl DistanceSensor for DistanceSensors {
 }
 
 pub type MazeWidth = U4;
-pub type DistanceSensorNum = U3;
-pub type MaxSize = op!(U4 * U4 * MazeWidth * MazeWidth);
-pub type GoalSize = U2;
+pub type MaxSize = op!(MazeWidth * MazeWidth);
 
-pub type RunNode = data_types::RunNode<MazeWidth>;
+pub type RunNode = impls::RunNode<MazeWidth>;
 
-pub type SearchNode = data_types::SearchNode<MazeWidth>;
+#[allow(unused)]
+pub type SearchNode = impls::SearchNode<MazeWidth>;
 
 pub type RunAgent<Logger> = defaults::RunAgent<
     LeftEncoder,
@@ -101,13 +99,12 @@ pub type RunAgent<Logger> = defaults::RunAgent<
     LeftMotor,
     RightMotor,
     DistanceSensors,
-    DistanceSensorNum,
     Math,
     MaxSize,
     Logger,
 >;
 
-pub type Commander = defaults::Commander<MazeWidth, GenericArray<RunNode, GoalSize>, Math, MaxSize>;
+pub type Commander = defaults::Commander<MazeWidth, Math>;
 
 pub type RunOperator<Logger> = defaults::RunOperator<
     LeftEncoder,
@@ -116,11 +113,7 @@ pub type RunOperator<Logger> = defaults::RunOperator<
     LeftMotor,
     RightMotor,
     DistanceSensors,
-    DistanceSensorNum,
     Math,
-    MaxSize,
-    (),
     MazeWidth,
-    GenericArray<RunNode, GoalSize>,
     Logger,
 >;

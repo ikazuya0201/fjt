@@ -62,10 +62,9 @@ fn TIM5() {
 #[entry]
 fn main() -> ! {
     let start = cortex_m_rt::heap_start() as usize;
-    let size = 40960; // in bytes
+    let size = 128; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
-    BAG.run_operator.init();
     BAG.run_operator.run().ok();
 
     free(|_cs| {
