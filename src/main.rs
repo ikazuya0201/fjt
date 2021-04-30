@@ -2,16 +2,10 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
-#[macro_use]
-extern crate typenum;
-
 extern crate alloc;
 mod alias;
-mod bindings;
 mod init;
-mod logger;
 mod macros;
-mod math;
 mod sensors;
 
 use core::alloc::Layout;
@@ -62,7 +56,7 @@ fn TIM5() {
 #[entry]
 fn main() -> ! {
     let start = cortex_m_rt::heap_start() as usize;
-    let size = 128; // in bytes
+    let size = 8192; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
     BAG.operator.run().ok();

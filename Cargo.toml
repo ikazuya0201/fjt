@@ -13,11 +13,15 @@ cortex-m = "0.6.3"
 cortex-m-rt = "0.6.12"
 nb = "1.0.0"
 jlink_rtt = "0.1.0"
-heapless = "0.5.3"
 libm = "0.2.1"
 typenum = "1.12.0"
 generic-array = "0.13.2"
 alloc-cortex-m = "0.4.0"
+
+[dependencies.heapless]
+git = "https://github.com/japaric/heapless"
+rev = "b15163b2347ac7d3a2c929b88778e62f5639a548"
+features = ["serde"]
 
 [dependencies.uom]
 version = "0.30.0"
@@ -29,18 +33,15 @@ version = "1.4.0"
 features = ["spin_no_std"]
 
 [dependencies.stm32f4xx-hal]
-version = "0.8.3"
+version = "0.9.0"
+git = "https://github.com/ikazuya0201/stm32f4xx-hal"
+branch = "fix/stopwatch"
 features = ["stm32f413", "rt"]
 
 [dependencies.components]
-version = "0.1.0"
 git = "https://github.com/ikazuya0201/mouse_components.git"
-rev = "9aa353"
+branch = "develop"
 
 [dependencies.embedded-hal]
 version = "0.2.3"
 features = ["unproven"]
-
-[build-dependencies]
-cc = "1.0.59"
-bindgen = "0.55.1"
