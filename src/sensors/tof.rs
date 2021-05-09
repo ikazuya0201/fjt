@@ -3,7 +3,7 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use crate::wait_ok;
-use components::{data_types::Pose, sensors::DistanceSensor, utils::sample::Sample};
+use components::{sensors::DistanceSensor, types::data::Pose, utils::sample::Sample};
 use embedded_hal::{
     blocking::delay::DelayMs,
     blocking::i2c::{Write, WriteRead},
@@ -31,6 +31,7 @@ where
     device_address: u8,
     state: State,
     pose: Pose,
+    correction_weight: f32,
 }
 
 impl<T, U> VL6180X<T, U>
@@ -67,6 +68,7 @@ where
         delay: &'b mut V,
         new_address: u8, //7bit address
         pose: Pose,
+        correction_weight: f32,
     ) -> Self {
         let mut tof = Self {
             i2c,
@@ -74,6 +76,7 @@ where
             device_address: Self::DEFAULT_ADDRESS,
             state: State::Idle,
             pose,
+            correction_weight,
         };
 
         tof.init(delay, new_address);
@@ -222,7 +225,7 @@ where
                 self.state = Idle;
 
                 Ok(Sample {
-                    mean: Length::new::<meter>(distance as f32 / 1000.0),
+                    mean: self.correction_weight * Length::new::<meter>(distance as f32 / 1000.0),
                     standard_deviation: Self::STANDARD_DEVIATION,
                 })
             }

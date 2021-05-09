@@ -1,4 +1,4 @@
-use components::{data_types, defaults, impls, sensors::DistanceSensor, utils::sample::Sample};
+use components::{sensors::DistanceSensor, utils::sample::Sample};
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -14,10 +14,8 @@ use stm32f4xx_hal::{
     spi::Spi,
     stm32::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4},
 };
-use typenum::consts::*;
 use uom::si::f32::Length;
 
-use crate::math::Math;
 use crate::sensors::{IMotor, IVoltmeter, VL6180XError, ICM20648, MA702GQ, VL6180X};
 
 pub type Voltmeter = IVoltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
@@ -65,7 +63,7 @@ pub enum DistanceSensors {
 impl DistanceSensor for DistanceSensors {
     type Error = VL6180XError;
 
-    fn pose(&self) -> data_types::Pose {
+    fn pose(&self) -> components::types::data::Pose {
         use DistanceSensors::*;
         match self {
             Front(front) => front.pose(),
@@ -84,51 +82,42 @@ impl DistanceSensor for DistanceSensors {
     }
 }
 
-pub type MazeWidth = U4;
-#[allow(unused)]
-pub type MaxSize = op!(MazeWidth * MazeWidth);
+pub const N: usize = 4;
 
-pub type RunNode = impls::RunNode<MazeWidth>;
-
-#[allow(unused)]
-pub type SearchNode = impls::SearchNode<MazeWidth>;
-
-#[allow(unused)]
-pub type RunAgent<Logger> = defaults::RunAgent<
+pub type SearchOperator = components::defaults::alias::SearchOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
     LeftMotor,
     RightMotor,
     DistanceSensors,
-    Math,
-    MaxSize,
-    Logger,
+    N,
 >;
 
-pub type SearchCommander = defaults::SearchCommander<MazeWidth, Math>;
-
 #[allow(unused)]
-pub type RunOperator<Logger> = defaults::RunOperator<
+pub type RunOperator = components::defaults::alias::RunOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
     LeftMotor,
     RightMotor,
     DistanceSensors,
-    Math,
-    MazeWidth,
-    Logger,
+    N,
 >;
 
-pub type SearchOperator<Logger> = defaults::SearchOperator<
-    LeftEncoder,
-    RightEncoder,
-    Imu,
-    LeftMotor,
-    RightMotor,
-    DistanceSensors,
-    Math,
-    MazeWidth,
-    Logger,
+#[allow(unused)]
+pub type Robot = components::robot::Robot<
+    components::estimator::Estimator<LeftEncoder, RightEncoder, Imu>,
+    components::tracker::Tracker<
+        LeftMotor,
+        RightMotor,
+        components::controllers::TranslationalController,
+        components::controllers::RotationalController,
+    >,
+    components::wall_detector::WallDetector<
+        components::wall_manager::WallManager<N>,
+        components::obstacle_detector::ObstacleDetector<DistanceSensors>,
+        N,
+    >,
+    components::types::data::RobotState,
 >;
