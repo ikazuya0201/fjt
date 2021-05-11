@@ -60,7 +60,7 @@ where
     const ICM20648_DEVICE_ID: u8 = 0xE0;
 
     const ACCEL_RATIO: f32 = 2.0;
-    const GYRO_RATIO: f32 = 1000.0;
+    const GYRO_RATIO: f32 = 2000.0;
     const GRAVITY_ACCELERATION: Acceleration = Acceleration {
         dimension: PhantomData,
         units: PhantomData,
@@ -108,8 +108,8 @@ where
 
         write(Self::RA_REG_BANK_SEL, 0x20); //switch to user bank 2
 
-        //configure gryo to +-1000dps in full scale
-        write(Self::RA_GYRO_CONFIG_1, 0x04);
+        //configure gryo to +-2000dps in full scale
+        write(Self::RA_GYRO_CONFIG_1, 0x06);
 
         //disable digital low path filter
         //configure accelerometer to +-2g
