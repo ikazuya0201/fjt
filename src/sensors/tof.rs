@@ -59,7 +59,7 @@ where
     const STANDARD_DEVIATION: Length = Length {
         dimension: PhantomData,
         units: PhantomData,
-        value: 0.005,
+        value: 0.05,
     };
 
     pub fn new<'b, V: DelayMs<u32>>(
