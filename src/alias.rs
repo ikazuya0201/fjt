@@ -63,7 +63,7 @@ pub enum DistanceSensors {
 impl DistanceSensor for DistanceSensors {
     type Error = VL6180XError;
 
-    fn pose(&self) -> components::types::data::Pose {
+    fn pose(&self) -> &components::types::data::Pose {
         use DistanceSensors::*;
         match self {
             Front(front) => front.pose(),

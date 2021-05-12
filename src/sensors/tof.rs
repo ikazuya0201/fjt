@@ -197,8 +197,8 @@ where
 {
     type Error = VL6180XError;
 
-    fn pose(&self) -> Pose {
-        self.pose
+    fn pose(&self) -> &Pose {
+        &self.pose
     }
 
     fn get_distance(&mut self) -> nb::Result<Sample<Length>, Self::Error> {
