@@ -109,15 +109,11 @@ pub type RunOperator = components::defaults::alias::RunOperator<
 pub type Robot = components::robot::Robot<
     components::estimator::Estimator<LeftEncoder, RightEncoder, Imu>,
     components::tracker::Tracker<
-        LeftMotor,
-        RightMotor,
-        components::controllers::TranslationalController,
-        components::controllers::RotationalController,
+        components::controllers::MultiSisoController<LeftMotor, RightMotor>,
     >,
     components::wall_detector::WallDetector<
         components::wall_manager::WallManager<N>,
         components::obstacle_detector::ObstacleDetector<DistanceSensors>,
         N,
     >,
-    components::types::data::RobotState,
 >;

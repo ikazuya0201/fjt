@@ -10,7 +10,9 @@ use components::{
     },
     nodes::RunNode,
     prelude::*,
-    types::data::{AbsoluteDirection, AngleState, LengthState, Pose, RobotState, SearchKind},
+    types::data::{
+        AbsoluteDirection, AngleState, ControlParameters, LengthState, Pose, RobotState, SearchKind,
+    },
     utils::probability::Probability,
     wall_manager::WallManager,
 };
@@ -97,27 +99,29 @@ pub fn init_bag() -> Bag {
         .search_initial_route(SearchKind::Init)
         .search_final_route(SearchKind::Final)
         .estimator_cut_off_frequency(Frequency::new::<hertz>(50.0))
-        .period(Time::new::<second>(0.002))
-        .translational_kp(1.7453)
-        .translational_ki(8.1743)
-        .translational_kd(0.020854)
-        .translational_model_gain(2.201)
-        .translational_model_time_constant(Time::new::<second>(0.4798))
-        .rotational_kp(0.048469)
-        .rotational_ki(0.29326)
-        .rotational_kd(0.0001)
-        .rotational_model_gain(75.33)
-        .rotational_model_time_constant(Time::new::<second>(0.1999))
-        .tracker_kx(40.0)
-        .tracker_kdx(8.0)
-        .tracker_ky(40.0)
-        .tracker_kdy(8.0)
+        .period(Time::new::<second>(0.001))
+        .translational_parameters(ControlParameters {
+            kp: 4.8497,
+            ki: 29.5783,
+            kd: 0.0,
+            model_k: 1.865,
+            model_t1: 0.4443,
+        })
+        .rotational_parameters(ControlParameters {
+            kp: 0.21134,
+            ki: 2.9317,
+            kd: 0.0,
+            model_k: 82.39,
+            model_t1: 0.2855,
+        })
+        .tracker_gain(40.0)
+        .tracker_dgain(8.0)
         .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.2))
         .low_zeta(1.0)
         .low_b(1.0)
-        .front_offset(Length::new::<meter>(0.005))
+        .front_offset(Length::new::<meter>(0.0))
         .ignore_radius_from_pillar(Length::new::<meter>(0.008))
-        .fail_safe_distance(Length::new::<meter>(0.05))
+        .fail_safe_voltage_threshold(ElectricPotential::new::<volt>(6.0))
         .search_velocity(Velocity::new::<meter_per_second>(0.3))
         .max_velocity(Velocity::new::<meter_per_second>(1.0))
         .max_acceleration(Acceleration::new::<meter_per_second_squared>(10.0))
@@ -128,15 +132,13 @@ pub fn init_bag() -> Bag {
         ))
         .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(57600.0))
         .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
-        .wheel_interval(Length::new::<meter>(0.0335))
-        .estimator_correction_weight(0.0)
         .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
         .build()
         .expect("Should never panic");
 
-    let wheel_radius = Length::new::<meter>(0.00675);
+    let wheel_radius = Length::new::<meter>(0.007);
 
-    let mut timer = Timer::tim5(device_peripherals.TIM5, 500.hz(), clocks);
+    let mut timer = Timer::tim5(device_peripherals.TIM5, 1000.hz(), clocks);
 
     let voltmeter = {
         let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());

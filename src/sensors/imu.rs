@@ -7,10 +7,7 @@ use embedded_hal::{
 };
 use nb::block;
 use stm32f4xx_hal::spi::Error as SpiError;
-use uom::si::{
-    angular_velocity::degree_per_second,
-    f32::{Acceleration, AngularVelocity},
-};
+use uom::si::f32::{Acceleration, AngularVelocity};
 
 use crate::wait_ok;
 
@@ -59,12 +56,15 @@ where
 
     const ICM20648_DEVICE_ID: u8 = 0xE0;
 
-    const ACCEL_RATIO: f32 = 2.0;
-    const GYRO_RATIO: f32 = 2000.0;
-    const GRAVITY_ACCELERATION: Acceleration = Acceleration {
+    const GYRO_SENSITIVITY_SCALE_FACTOR: AngularVelocity = AngularVelocity {
         dimension: PhantomData,
         units: PhantomData,
-        value: 9.80665,
+        value: 0.0010642251536550791,
+    };
+    const ACCEL_SENSITIVITY_SCALE_FACTOR: Acceleration = Acceleration {
+        dimension: PhantomData,
+        units: PhantomData,
+        value: 0.0005985504150390625,
     };
 
     const CALIBRATION_NUM: u16 = 1000;
@@ -199,16 +199,11 @@ where
     }
 
     fn convert_raw_data_to_angular_velocity(&mut self, gyro_value: i16) -> AngularVelocity {
-        let raw_angular_velocity = AngularVelocity::new::<degree_per_second>(
-            (gyro_value as f32) / (core::i16::MAX as f32),
-        );
-        Self::GYRO_RATIO * raw_angular_velocity
+        Self::GYRO_SENSITIVITY_SCALE_FACTOR * gyro_value as f32 * 0.99
     }
 
     fn convert_raw_data_to_acceleration(&mut self, accel_value: i16) -> Acceleration {
-        let raw_acceleration =
-            Self::GRAVITY_ACCELERATION * (accel_value as f32) / (core::i16::MAX as f32);
-        Self::ACCEL_RATIO * raw_acceleration
+        Self::ACCEL_SENSITIVITY_SCALE_FACTOR * accel_value as f32
     }
 }
 
