@@ -97,7 +97,7 @@ dependencies = [
 [[package]]
 name = "components"
 version = "0.1.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=develop#f1a3f0b852a83490fd49ed5ace9016199a0c2f4a"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=develop#b56cf689c1b59e8506e4cdf532dc129d4a9857f2"
 dependencies = [
  "heapless",
  "micromath",
@@ -470,7 +470,8 @@ dependencies = [
 [[package]]
 name = "stm32f4xx-hal"
 version = "0.9.0"
-source = "git+https://github.com/ikazuya0201/stm32f4xx-hal?branch=fix/stopwatch#2108e38b3037a17d9a034b8bccea4f0acca5c122"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89b4cb13b1bb36e7381eaf8941062b1eba172542b9d4f72dc50c35c4ac6260f2"
 dependencies = [
  "bare-metal 1.0.0",
  "cast",

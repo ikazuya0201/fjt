@@ -10,7 +10,9 @@ use components::{
     },
     nodes::RunNode,
     prelude::*,
-    types::data::{AbsoluteDirection, AngleState, LengthState, Pose, RobotState, SearchKind},
+    types::data::{
+        AbsoluteDirection, AngleState, ControlParameters, LengthState, Pose, RobotState, SearchKind,
+    },
     utils::probability::Probability,
     wall_manager::WallManager,
 };
@@ -98,42 +100,43 @@ pub fn init_bag() -> Bag {
         .search_final_route(SearchKind::Final)
         .estimator_cut_off_frequency(Frequency::new::<hertz>(50.0))
         .period(Time::new::<second>(0.001))
-        .translational_kp(5.1372)
-        .translational_ki(30.81)
-        .translational_kd(0.01)
-        .translational_model_gain(0.8401)
-        .translational_model_time_constant(Time::new::<second>(0.3619))
-        .rotational_kp(0.048469)
-        .rotational_ki(0.29326)
-        .rotational_kd(0.0)
-        .rotational_model_gain(75.33)
-        .rotational_model_time_constant(Time::new::<second>(0.1999))
-        .tracker_kx(40.0)
-        .tracker_kdx(8.0)
-        .tracker_ky(40.0)
-        .tracker_kdy(8.0)
-        .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.1))
+        .translational_parameters(ControlParameters {
+            kp: 4.8497,
+            ki: 29.5783,
+            kd: 0.0,
+            model_k: 1.865,
+            model_t1: 0.4443,
+        })
+        .rotational_parameters(ControlParameters {
+            kp: 0.21134,
+            ki: 2.9317,
+            kd: 0.0,
+            model_k: 82.39,
+            model_t1: 0.2855,
+        })
+        .tracker_gain(40.0)
+        .tracker_dgain(8.0)
+        .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.2))
         .low_zeta(1.0)
-        .low_b(0.5)
-        .front_offset(Length::new::<meter>(0.005))
-        .ignore_radius_from_pillar(Length::new::<meter>(0.01))
-        .fail_safe_distance(Length::new::<meter>(0.05))
-        .search_velocity(Velocity::new::<meter_per_second>(0.12))
+        .low_b(1.0)
+        .front_offset(Length::new::<meter>(0.0))
+        .ignore_radius_from_pillar(Length::new::<meter>(0.008))
+        .fail_safe_voltage_threshold(ElectricPotential::new::<volt>(6.0))
+        .search_velocity(Velocity::new::<meter_per_second>(0.3))
         .max_velocity(Velocity::new::<meter_per_second>(1.0))
-        .max_acceleration(Acceleration::new::<meter_per_second_squared>(3.0))
+        .max_acceleration(Acceleration::new::<meter_per_second_squared>(10.0))
         .max_jerk(Jerk::new::<meter_per_second_cubed>(50.0))
-        .spin_angular_velocity(AngularVelocity::new::<degree_per_second>(180.0))
+        .spin_angular_velocity(AngularVelocity::new::<degree_per_second>(1440.0))
         .spin_angular_acceleration(AngularAcceleration::new::<degree_per_second_squared>(
-            1800.0,
+            14400.0,
         ))
-        .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(7200.0))
-        .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
-        .wheel_interval(Length::new::<meter>(0.0335))
-        .estimator_correction_weight(0.0)
+        .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(57600.0))
+        .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
         .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
         .build()
         .expect("Should never panic");
-    let wheel_radius = Length::new::<meter>(0.0069);
+
+    let wheel_radius = Length::new::<meter>(0.007);
 
     let mut timer = Timer::tim5(device_peripherals.TIM5, 1000.hz(), clocks);
 
@@ -239,8 +242,8 @@ pub fn init_bag() -> Bag {
                 &mut delay,
                 0x31,
                 Pose {
-                    x: Length::new::<meter>(-0.012),
-                    y: Length::new::<meter>(0.013),
+                    x: Length::new::<meter>(0.013),
+                    y: Length::new::<meter>(0.012),
                     theta: Angle::new::<degree>(90.0),
                 },
                 0.8333334,
@@ -254,8 +257,8 @@ pub fn init_bag() -> Bag {
                 &mut delay,
                 0x30,
                 Pose {
-                    x: Length::new::<meter>(0.012),
-                    y: Length::new::<meter>(0.013),
+                    x: Length::new::<meter>(0.013),
+                    y: Length::new::<meter>(-0.012),
                     theta: Angle::new::<degree>(-90.0),
                 },
                 0.9677419,
@@ -269,40 +272,16 @@ pub fn init_bag() -> Bag {
                 &mut delay,
                 0x29,
                 Pose {
-                    x: Length::new::<meter>(0.0),
-                    y: Length::new::<meter>(0.024),
+                    x: Length::new::<meter>(0.024),
+                    y: Length::new::<meter>(0.0),
                     theta: Angle::new::<degree>(0.0),
                 },
                 1.0,
             )
         };
 
-        // loop {
-        //     writeln!(
-        //         out,
-        //         "left:{:?}\nright:{:?}\nfront:{:?}",
-        //         tof_left.get_distance(),
-        //         tof_right.get_distance(),
-        //         tof_front.get_distance()
-        //     )
-        //     .unwrap();
-        //     delay.delay_ms(1000u16);
-        // }
-
         let existence_threshold = Probability::new(0.1).unwrap();
 
-        // let wall_manager = WallManager::with_str(
-        //     existence_threshold,
-        //     r"+---+---+---+---+
-        // |               |
-        // +   +---+---+   +
-        // |   |       |   |
-        // +   +   +   +   +
-        // |   |   |       |
-        // +   +   +---+   +
-        // |   |       |   |
-        // +---+---+---+---+",
-        // );
         let wall_manager = WallManager::new(existence_threshold);
 
         ResourceBuilder::new()
@@ -346,22 +325,6 @@ pub fn init_bag() -> Bag {
         .into();
 
     let config: ConfigContainer<N> = config.into();
-
-    // let mut robot = crate::alias::Robot::construct(&config, &state, &mut resource);
-    // let target = Target {
-    //     x: LengthTarget {
-    //         x: Length::new::<meter>(0.045),
-    //         ..Default::default()
-    //     },
-    //     y: LengthTarget {
-    //         x: Length::new::<meter>(0.045),
-    //         ..Default::default()
-    //     },
-    //     theta: AngleTarget {
-    //         x: Angle::new::<degree>(90.0),
-    //         ..Default::default()
-    //     },
-    // };
 
     timer.listen(Event::TimeOut);
     free(|cs| {

@@ -59,7 +59,7 @@ where
     const STANDARD_DEVIATION: Length = Length {
         dimension: PhantomData,
         units: PhantomData,
-        value: 0.005,
+        value: 0.05,
     };
 
     pub fn new<'b, V: DelayMs<u32>>(
@@ -197,8 +197,8 @@ where
 {
     type Error = VL6180XError;
 
-    fn pose(&self) -> Pose {
-        self.pose
+    fn pose(&self) -> &Pose {
+        &self.pose
     }
 
     fn get_distance(&mut self) -> nb::Result<Sample<Length>, Self::Error> {

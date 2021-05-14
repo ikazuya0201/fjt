@@ -34,8 +34,6 @@ features = ["spin_no_std"]
 
 [dependencies.stm32f4xx-hal]
 version = "0.9.0"
-git = "https://github.com/ikazuya0201/stm32f4xx-hal"
-branch = "fix/stopwatch"
 features = ["stm32f413", "rt"]
 
 [dependencies.components]
