@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 use core::marker::PhantomData;
 
-use components::sensors::IMU;
+use components::sensors::Imu;
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
@@ -12,15 +12,15 @@ use uom::si::f32::{Acceleration, AngularVelocity};
 use crate::wait_ok;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IMUError;
+pub struct ImuError;
 
-impl From<SpiError> for IMUError {
+impl From<SpiError> for ImuError {
     fn from(_error: SpiError) -> Self {
         Self
     }
 }
 
-impl From<Infallible> for IMUError {
+impl From<Infallible> for ImuError {
     fn from(_error: Infallible) -> Self {
         Self
     }
@@ -37,7 +37,7 @@ impl<T, U> ICM20648<T, U>
 where
     T: Transfer<u8>,
     U: OutputPin,
-    IMUError: From<<T as Transfer<u8>>::Error> + From<<U as OutputPin>::Error>,
+    ImuError: From<<T as Transfer<u8>>::Error> + From<<U as OutputPin>::Error>,
 {
     //RA: register address
     //all bank
@@ -121,7 +121,7 @@ where
         wait_ok!(self.calibrate(timer));
     }
 
-    pub fn calibrate<'a, W>(&mut self, timer: &'a mut W) -> Result<(), IMUError>
+    pub fn calibrate<'a, W>(&mut self, timer: &'a mut W) -> Result<(), ImuError>
     where
         W: CountDown,
     {
@@ -139,7 +139,7 @@ where
         Ok(())
     }
 
-    fn check_who_am_i(&mut self) -> nb::Result<(), IMUError> {
+    fn check_who_am_i(&mut self) -> nb::Result<(), ImuError> {
         let mut buffer = [0; 2];
         let buffer = self.read_from_registers(Self::RA_WHO_AM_I, &mut buffer)?;
         if buffer[0] == Self::ICM20648_DEVICE_ID {
@@ -149,24 +149,24 @@ where
         }
     }
 
-    fn assert(&mut self) -> Result<(), IMUError> {
+    fn assert(&mut self) -> Result<(), ImuError> {
         self.cs.set_low()?;
         Ok(())
     }
 
-    fn deassert(&mut self) -> Result<(), IMUError> {
+    fn deassert(&mut self) -> Result<(), ImuError> {
         self.cs.set_high()?;
         Ok(())
     }
 
-    fn write_to_register(&mut self, address: u8, data: u8) -> Result<(), IMUError> {
+    fn write_to_register(&mut self, address: u8, data: u8) -> Result<(), ImuError> {
         self.assert()?;
         let res = self._write_to_register(address, data);
         self.deassert()?;
         res
     }
 
-    fn _write_to_register(&mut self, address: u8, data: u8) -> Result<(), IMUError> {
+    fn _write_to_register(&mut self, address: u8, data: u8) -> Result<(), ImuError> {
         self.spi.transfer(&mut [address, data])?;
         Ok(())
     }
@@ -176,7 +176,7 @@ where
         &mut self,
         address: u8,
         buffer: &'w mut [u8],
-    ) -> Result<&'w [u8], IMUError> {
+    ) -> Result<&'w [u8], ImuError> {
         self.assert()?;
         let res = self._read_from_registers(address, buffer);
         self.deassert()?;
@@ -187,7 +187,7 @@ where
         &mut self,
         address: u8,
         buffer: &'w mut [u8],
-    ) -> Result<&'w [u8], IMUError> {
+    ) -> Result<&'w [u8], ImuError> {
         buffer[0] = address | 0x80;
         let buffer = self.spi.transfer(buffer)?;
         Ok(&buffer[1..])
@@ -203,17 +203,17 @@ where
     }
 
     fn convert_raw_data_to_acceleration(&mut self, accel_value: i16) -> Acceleration {
-        Self::ACCEL_SENSITIVITY_SCALE_FACTOR * accel_value as f32
+        Self::ACCEL_SENSITIVITY_SCALE_FACTOR * accel_value as f32 * 0.99
     }
 }
 
-impl<T, U> IMU for ICM20648<T, U>
+impl<T, U> Imu for ICM20648<T, U>
 where
     T: Transfer<u8>,
     U: OutputPin,
-    IMUError: From<<T as Transfer<u8>>::Error> + From<<U as OutputPin>::Error>,
+    ImuError: From<<T as Transfer<u8>>::Error> + From<<U as OutputPin>::Error>,
 {
-    type Error = IMUError;
+    type Error = ImuError;
 
     fn get_angular_velocity(&mut self) -> nb::Result<AngularVelocity, Self::Error> {
         let mut buffer = [0; 3];
