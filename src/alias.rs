@@ -82,8 +82,9 @@ impl DistanceSensor for DistanceSensors {
     }
 }
 
-pub const N: usize = 4;
+pub const N: usize = 16;
 
+#[allow(unused)]
 pub type SearchOperator = components::defaults::alias::SearchOperator<
     LeftEncoder,
     RightEncoder,
@@ -116,4 +117,21 @@ pub type Robot = components::robot::Robot<
         components::obstacle_detector::ObstacleDetector<DistanceSensors>,
         N,
     >,
+>;
+
+#[allow(unused)]
+pub type Administrator = components::administrator::Administrator<
+    components::defaults::operator_store::Mode,
+    crate::selector::Selector,
+    components::defaults::operator::Operators<
+        LeftEncoder,
+        RightEncoder,
+        Imu,
+        LeftMotor,
+        RightMotor,
+        DistanceSensors,
+        N,
+    >,
+    components::defaults::operator_store::OperatorStore<N>,
+    crate::interrupt_manager::InterruptManager,
 >;

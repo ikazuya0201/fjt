@@ -5,7 +5,9 @@
 extern crate alloc;
 mod alias;
 mod init;
+mod interrupt_manager;
 mod macros;
+mod selector;
 mod sensors;
 
 use core::alloc::Layout;
@@ -15,7 +17,6 @@ use core::ops::DerefMut;
 use core::panic::PanicInfo;
 
 use alloc_cortex_m::CortexMHeap;
-use components::prelude::*;
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m_rt::entry;
 use jlink_rtt::Output;
@@ -49,28 +50,21 @@ fn TIM5() {
         if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
             tim5.clear_interrupt(Event::TimeOut);
         }
-        BAG.operator.tick().expect("Should panic");
+        BAG.administrator.tick().expect("Should never panic");
     });
 }
 
 #[entry]
 fn main() -> ! {
     let start = cortex_m_rt::heap_start() as usize;
-    let size = 8192; // in bytes
+    let size = 32768; // in bytes
     unsafe { ALLOCATOR.init(start, size) }
 
-    BAG.operator.run().ok();
-
-    free(|_cs| {
-        cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
-        unsafe {
-            cortex_m::interrupt::enable();
-            cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
-        }
-    });
+    BAG.administrator.run().expect("Should never panic");
+    BAG.administrator.start();
 
     loop {
-        BAG.operator.run().ok();
+        BAG.administrator.run().expect("Should never panic");
     }
 }
 

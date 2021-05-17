@@ -5,13 +5,15 @@ use core::fmt::Write;
 use components::{
     defaults::{
         config::{ConfigBuilder, ConfigContainer},
+        operator::Operators,
+        operator_store::{Mode, OperatorStore},
         resource::{ResourceBuilder, ResourceContainer},
         state::{StateBuilder, StateContainer},
     },
-    nodes::RunNode,
     prelude::*,
     types::data::{
-        AbsoluteDirection, AngleState, ControlParameters, LengthState, Pose, RobotState, SearchKind,
+        AbsoluteDirection, AngleState, ControlParameters, LengthState, Pose, Position, RobotState,
+        RunNode, SearchKind,
     },
     utils::probability::Probability,
     wall_manager::WallManager,
@@ -48,12 +50,14 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use crate::alias::{DistanceSensors, SearchOperator, Voltmeter, N};
+use crate::alias::{Administrator, DistanceSensors, SearchOperator, Voltmeter, N};
+use crate::interrupt_manager::InterruptManager;
+use crate::selector::Selector;
 use crate::sensors::{IMotor, Voltmeter as IVoltmeter, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
 
 pub struct Bag {
-    pub operator: SearchOperator,
+    pub administrator: Administrator,
 }
 
 unsafe impl Sync for Bag {}
@@ -88,14 +92,8 @@ pub fn init_bag() -> Bag {
 
     let config = ConfigBuilder::new()
         .start(RunNode::<N>::new(0, 0, North).unwrap())
-        .return_goal(RunNode::<N>::new(0, 0, South).unwrap())
-        .goals(
-            core::array::IntoIter::new([
-                RunNode::<N>::new(2, 0, South).unwrap(),
-                RunNode::<N>::new(2, 0, West).unwrap(),
-            ])
-            .collect(),
-        )
+        .return_goal(Position::new(0, 0).unwrap())
+        .goal(Position::new(2, 0).unwrap())
         .search_initial_route(SearchKind::Init)
         .search_final_route(SearchKind::Final)
         .estimator_cut_off_frequency(Frequency::new::<hertz>(50.0))
@@ -114,16 +112,16 @@ pub fn init_bag() -> Bag {
             model_k: 82.39,
             model_t1: 0.2855,
         })
-        .tracker_gain(40.0)
+        .tracker_gain(120.0)
         .tracker_dgain(8.0)
         .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.2))
         .low_zeta(1.0)
         .low_b(1.0)
         .front_offset(Length::new::<meter>(0.0))
         .ignore_radius_from_pillar(Length::new::<meter>(0.008))
-        .fail_safe_voltage_threshold(ElectricPotential::new::<volt>(6.0))
+        .fail_safe_voltage_threshold(ElectricPotential::new::<volt>(7.0))
         .search_velocity(Velocity::new::<meter_per_second>(0.3))
-        .max_velocity(Velocity::new::<meter_per_second>(1.0))
+        .max_velocity(Velocity::new::<meter_per_second>(2.0))
         .max_acceleration(Acceleration::new::<meter_per_second_squared>(10.0))
         .max_jerk(Jerk::new::<meter_per_second_cubed>(50.0))
         .spin_angular_velocity(AngularVelocity::new::<degree_per_second>(1440.0))
@@ -131,7 +129,7 @@ pub fn init_bag() -> Bag {
             14400.0,
         ))
         .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(57600.0))
-        .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
+        .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
         .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
         .build()
         .expect("Should never panic");
@@ -281,7 +279,6 @@ pub fn init_bag() -> Bag {
         };
 
         let existence_threshold = Probability::new(0.1).unwrap();
-
         let wall_manager = WallManager::new(existence_threshold);
 
         ResourceBuilder::new()
@@ -331,7 +328,14 @@ pub fn init_bag() -> Bag {
         TIMER_TIM5.borrow(cs).replace(Some(timer));
     });
 
-    Bag {
-        operator: SearchOperator::construct(&config, &state, &mut resource),
-    }
+    let operator = Operators::Search(SearchOperator::construct(&config, &state, &mut resource));
+    let administrator = Administrator::new(
+        Selector,
+        operator,
+        OperatorStore::new(config),
+        Mode::Search(1),
+        InterruptManager,
+    );
+
+    Bag { administrator }
 }
