@@ -1,4 +1,8 @@
 use mousecore::{sensors::DistanceSensor, utils::random::Random};
+use sensors::{
+    encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180XError, tof::VL6180X,
+    voltmeter::Voltmeter,
+};
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -8,7 +12,7 @@ use stm32f4xx_hal::{
         gpioh::{PH0, PH1},
         Alternate, AlternateOD, Analog, Output, PushPull, AF1, AF2, AF4, AF5,
     },
-    i2c::{Error as I2cError, I2c},
+    i2c::I2c,
     pwm::*,
     qei::Qei,
     spi::Spi,
@@ -16,13 +20,11 @@ use stm32f4xx_hal::{
 };
 use uom::si::f32::Length;
 
-use crate::sensors::{IMotor, IVoltmeter, VL6180XError, ICM20648, MA702GQ, VL6180X};
+pub type VoltmeterAlias = Voltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
 
-pub type Voltmeter = IVoltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
+pub type LeftMotor = Motor<PwmChannels<TIM1, C2>, PwmChannels<TIM1, C1>, VoltmeterAlias>;
 
-pub type LeftMotor = IMotor<PwmChannels<TIM1, C2>, PwmChannels<TIM1, C1>, Voltmeter>;
-
-pub type RightMotor = IMotor<PwmChannels<TIM1, C4>, PwmChannels<TIM1, C3>, Voltmeter>;
+pub type RightMotor = Motor<PwmChannels<TIM1, C4>, PwmChannels<TIM1, C3>, VoltmeterAlias>;
 
 pub type LeftEncoder = MA702GQ<Qei<TIM4, (PB6<Alternate<AF2>>, PB7<Alternate<AF2>>)>>;
 
@@ -39,12 +41,6 @@ pub type Imu = ICM20648<
     >,
     PC15<Output<PushPull>>,
 >;
-
-impl From<I2cError> for VL6180XError {
-    fn from(_error: I2cError) -> VL6180XError {
-        VL6180XError
-    }
-}
 
 pub type SensorI2c = I2c<I2C1, (PB8<AlternateOD<AF4>>, PB9<AlternateOD<AF4>>)>;
 

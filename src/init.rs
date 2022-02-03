@@ -22,6 +22,10 @@ use mousecore::{
     utils::random::Random,
     wall_manager::WallManager,
 };
+use sensors::{
+    encoder::MA702GQ, imu::ICM20648, motor::Motor, motor::Voltmeter as IVoltmeter, tof::VL6180X,
+    voltmeter::Voltmeter,
+};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
     delay::Delay,
@@ -51,10 +55,9 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use crate::alias::{Administrator, DistanceSensors, SearchOperator, Voltmeter, N};
+use crate::alias::{Administrator, DistanceSensors, SearchOperator, N};
 use crate::interrupt_manager::InterruptManager;
 use crate::selector::Selector;
-use crate::sensors::{IMotor, Voltmeter as IVoltmeter, ICM20648, MA702GQ, VL6180X};
 use crate::TIMER_TIM5;
 
 pub struct Bag {
@@ -229,8 +232,8 @@ pub fn init_bag() -> Bag {
             pwm3.enable();
             pwm4.enable();
             (
-                IMotor::new(pwm2, pwm1, Rc::clone(&voltmeter)),
-                IMotor::new(pwm4, pwm3, voltmeter),
+                Motor::new(pwm2, pwm1, Rc::clone(&voltmeter)),
+                Motor::new(pwm4, pwm3, voltmeter),
             )
         };
 

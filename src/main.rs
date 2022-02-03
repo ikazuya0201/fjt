@@ -8,7 +8,6 @@ mod init;
 mod interrupt_manager;
 mod macros;
 mod selector;
-mod sensors;
 
 use core::alloc::Layout;
 use core::cell::RefCell;

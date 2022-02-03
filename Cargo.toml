@@ -34,7 +34,11 @@ features = ["stm32f413", "rt"]
 
 [dependencies.mousecore]
 git = "https://github.com/ikazuya0201/mouse_components.git"
-branch = "develop"
+branch = "master"
+
+[dependencies.sensors]
+git = "https://github.com/ikazuya0201/mouse_components.git"
+branch = "master"
 
 [dependencies.embedded-hal]
 version = "0.2.3"
