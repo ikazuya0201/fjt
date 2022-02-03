@@ -1,8 +1,8 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
-use components::sensors::Motor;
 use embedded_hal::PwmPin;
+use mousecore::sensors::Motor;
 use uom::si::{electric_potential::volt, f32::ElectricPotential, ratio::ratio};
 
 pub trait Voltmeter {

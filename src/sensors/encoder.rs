@@ -1,5 +1,5 @@
-use components::sensors::Encoder;
 use embedded_hal::Qei;
+use mousecore::sensors::Encoder;
 use uom::si::{
     angle::revolution,
     f32::{Angle, Length},

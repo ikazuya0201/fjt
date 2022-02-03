@@ -1,5 +1,5 @@
-use components::administrator::Selector as ISelector;
-use components::defaults::operator_store::Mode;
+use mousecore::administrator::Selector as ISelector;
+use mousecore::defaults::operator_store::Mode;
 
 pub struct Selector;
 

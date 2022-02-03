@@ -1,5 +1,5 @@
-use components::administrator::InterruptManager as IInterruptManager;
 use cortex_m::interrupt::free;
+use mousecore::administrator::InterruptManager as IInterruptManager;
 use stm32f4xx_hal::interrupt;
 
 pub struct InterruptManager;

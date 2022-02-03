@@ -1,10 +1,10 @@
 use core::convert::Infallible;
 use core::marker::PhantomData;
 
-use components::sensors::Imu;
 use embedded_hal::{
     blocking::delay::DelayMs, blocking::spi::Transfer, digital::v2::OutputPin, timer::CountDown,
 };
+use mousecore::sensors::Imu;
 use nb::block;
 use stm32f4xx_hal::spi::Error as SpiError;
 use uom::si::f32::{Acceleration, AngularVelocity};
@@ -203,7 +203,7 @@ where
     }
 
     fn convert_raw_data_to_acceleration(&mut self, accel_value: i16) -> Acceleration {
-        Self::ACCEL_SENSITIVITY_SCALE_FACTOR * accel_value as f32 * 0.99
+        Self::ACCEL_SENSITIVITY_SCALE_FACTOR * accel_value as f32
     }
 }
 

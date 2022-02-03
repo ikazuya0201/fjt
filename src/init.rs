@@ -2,7 +2,10 @@ use alloc::rc::Rc;
 use core::cell::RefCell;
 use core::fmt::Write;
 
-use components::{
+use cortex_m::interrupt::free;
+use embedded_hal::prelude::*;
+use jlink_rtt::Output;
+use mousecore::{
     defaults::{
         config::{ConfigBuilder, ConfigContainer},
         operator::Operators,
@@ -16,11 +19,9 @@ use components::{
         RunNode, SearchKind,
     },
     utils::probability::Probability,
+    utils::random::Random,
     wall_manager::WallManager,
 };
-use cortex_m::interrupt::free;
-use embedded_hal::prelude::*;
-use jlink_rtt::Output;
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
     delay::Delay,
@@ -45,7 +46,7 @@ use uom::si::{
     },
     frequency::hertz,
     jerk::meter_per_second_cubed,
-    length::meter,
+    length::{meter, millimeter},
     time::second,
     velocity::meter_per_second,
 };
@@ -117,7 +118,7 @@ pub fn init_bag() -> Bag {
         .valid_control_lower_bound(Velocity::new::<meter_per_second>(0.2))
         .low_zeta(1.0)
         .low_b(1.0)
-        .front_offset(Length::new::<meter>(0.0))
+        .front_offset(Length::new::<meter>(0.005))
         .ignore_radius_from_pillar(Length::new::<meter>(0.008))
         .fail_safe_voltage_threshold(ElectricPotential::new::<volt>(7.0))
         .search_velocity(Velocity::new::<meter_per_second>(0.3))
@@ -131,6 +132,7 @@ pub fn init_bag() -> Bag {
         .spin_angular_jerk(AngularJerk::new::<degree_per_second_cubed>(57600.0))
         .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
         .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
+        // .estimator_standard_deviation_delta(Length::new::<meter>(2e-6))
         .build()
         .expect("Should never panic");
 
@@ -165,7 +167,7 @@ pub fn init_bag() -> Bag {
         )))
     };
 
-    let mut resource: ResourceContainer<_, _, _, _, _, _, N> = {
+    let mut resource = {
         let right_encoder = {
             let pins = (
                 gpioa.pa0.into_alternate_af1(),
@@ -241,10 +243,11 @@ pub fn init_bag() -> Bag {
                 0x31,
                 Pose {
                     x: Length::new::<meter>(0.013),
-                    y: Length::new::<meter>(0.012),
+                    y: Length::new::<meter>(0.013),
                     theta: Angle::new::<degree>(90.0),
                 },
-                0.8333334,
+                0.983_606_6,
+                Length::new::<millimeter>(-4.426_23),
             )
         };
         let tof_right = {
@@ -256,10 +259,11 @@ pub fn init_bag() -> Bag {
                 0x30,
                 Pose {
                     x: Length::new::<meter>(0.013),
-                    y: Length::new::<meter>(-0.012),
+                    y: Length::new::<meter>(-0.013),
                     theta: Angle::new::<degree>(-90.0),
                 },
-                0.9677419,
+                0.833_333_3,
+                Length::new::<millimeter>(1.388_889),
             )
         };
         let tof_front = {
@@ -274,42 +278,50 @@ pub fn init_bag() -> Bag {
                     y: Length::new::<meter>(0.0),
                     theta: Angle::new::<degree>(0.0),
                 },
-                1.0,
+                1.086_076,
+                Length::new::<millimeter>(-15.344_74),
             )
         };
 
         let existence_threshold = Probability::new(0.1).unwrap();
         let wall_manager = WallManager::new(existence_threshold);
 
-        ResourceBuilder::new()
-            .left_encoder(left_encoder)
-            .right_encoder(right_encoder)
-            .left_motor(left_motor)
-            .right_motor(right_motor)
-            .wall_manager(Rc::new(wall_manager))
-            .imu(imu)
-            .distance_sensors(
-                core::array::IntoIter::new([
-                    DistanceSensors::Front(tof_front),
-                    DistanceSensors::Right(tof_right),
-                    DistanceSensors::Left(tof_left),
-                ])
-                .collect(),
-            )
-            .build()
-            .expect("Should never panic")
-            .into()
+        ResourceContainer::from(
+            ResourceBuilder::new()
+                .left_encoder(left_encoder)
+                .right_encoder(right_encoder)
+                .left_motor(left_motor)
+                .right_motor(right_motor)
+                .wall_manager(Rc::new(wall_manager))
+                .imu(imu)
+                .distance_sensors(
+                    IntoIterator::into_iter([
+                        DistanceSensors::Right(tof_right),
+                        DistanceSensors::Left(tof_left),
+                        DistanceSensors::Front(tof_front),
+                    ])
+                    .collect(),
+                )
+                .build()
+                .expect("Should never panic"),
+        )
     };
 
     let state: StateContainer<N> = StateBuilder::new()
         .current_node(config.start().clone().into())
         .robot_state(RobotState {
             x: LengthState {
-                x: Length::new::<meter>(0.045),
+                x: Random {
+                    mean: Length::new::<meter>(0.045),
+                    standard_deviation: Default::default(),
+                },
                 ..Default::default()
             },
             y: LengthState {
-                x: Length::new::<meter>(0.045),
+                x: Random {
+                    mean: Length::new::<meter>(0.045),
+                    standard_deviation: Default::default(),
+                },
                 ..Default::default()
             },
             theta: AngleState {
@@ -333,7 +345,7 @@ pub fn init_bag() -> Bag {
         Selector,
         operator,
         OperatorStore::new(config),
-        Mode::Search(1),
+        Mode::Search(10),
         InterruptManager,
     );
 

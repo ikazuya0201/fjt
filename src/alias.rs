@@ -1,4 +1,4 @@
-use components::{sensors::DistanceSensor, utils::sample::Sample};
+use mousecore::{sensors::DistanceSensor, utils::random::Random};
 use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
@@ -63,7 +63,7 @@ pub enum DistanceSensors {
 impl DistanceSensor for DistanceSensors {
     type Error = VL6180XError;
 
-    fn pose(&self) -> &components::types::data::Pose {
+    fn pose(&self) -> &mousecore::types::data::Pose {
         use DistanceSensors::*;
         match self {
             Front(front) => front.pose(),
@@ -72,7 +72,7 @@ impl DistanceSensor for DistanceSensors {
         }
     }
 
-    fn get_distance(&mut self) -> nb::Result<Sample<Length>, VL6180XError> {
+    fn get_distance(&mut self) -> nb::Result<Random<Length>, VL6180XError> {
         use DistanceSensors::*;
         match self {
             Front(front) => front.get_distance(),
@@ -82,10 +82,10 @@ impl DistanceSensor for DistanceSensors {
     }
 }
 
-pub const N: usize = 16;
+pub const N: usize = 4;
 
 #[allow(unused)]
-pub type SearchOperator = components::defaults::alias::SearchOperator<
+pub type SearchOperator = mousecore::defaults::alias::SearchOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
@@ -96,7 +96,7 @@ pub type SearchOperator = components::defaults::alias::SearchOperator<
 >;
 
 #[allow(unused)]
-pub type RunOperator = components::defaults::alias::RunOperator<
+pub type RunOperator = mousecore::defaults::alias::RunOperator<
     LeftEncoder,
     RightEncoder,
     Imu,
@@ -107,23 +107,21 @@ pub type RunOperator = components::defaults::alias::RunOperator<
 >;
 
 #[allow(unused)]
-pub type Robot = components::robot::Robot<
-    components::estimator::Estimator<LeftEncoder, RightEncoder, Imu>,
-    components::tracker::Tracker<
-        components::controllers::MultiSisoController<LeftMotor, RightMotor>,
-    >,
-    components::wall_detector::WallDetector<
-        components::wall_manager::WallManager<N>,
-        components::obstacle_detector::ObstacleDetector<DistanceSensors>,
+pub type Robot = mousecore::robot::Robot<
+    mousecore::estimator::Estimator<LeftEncoder, RightEncoder, Imu>,
+    mousecore::tracker::Tracker<mousecore::controllers::MultiSisoController<LeftMotor, RightMotor>>,
+    mousecore::wall_detector::WallDetector<
+        mousecore::wall_manager::WallManager<N>,
+        DistanceSensors,
         N,
     >,
 >;
 
 #[allow(unused)]
-pub type Administrator = components::administrator::Administrator<
-    components::defaults::operator_store::Mode,
+pub type Administrator = mousecore::administrator::Administrator<
+    mousecore::defaults::operator_store::Mode,
     crate::selector::Selector,
-    components::defaults::operator::Operators<
+    mousecore::defaults::operator::Operators<
         LeftEncoder,
         RightEncoder,
         Imu,
@@ -132,6 +130,6 @@ pub type Administrator = components::administrator::Administrator<
         DistanceSensors,
         N,
     >,
-    components::defaults::operator_store::OperatorStore<N>,
+    mousecore::defaults::operator_store::OperatorStore<N>,
     crate::interrupt_manager::InterruptManager,
 >;

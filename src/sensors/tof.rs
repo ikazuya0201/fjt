@@ -3,12 +3,12 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use crate::wait_ok;
-use components::{sensors::DistanceSensor, types::data::Pose, utils::sample::Sample};
 use embedded_hal::{
     blocking::delay::DelayMs,
     blocking::i2c::{Write, WriteRead},
     digital::v2::OutputPin,
 };
+use mousecore::{sensors::DistanceSensor, types::data::Pose, utils::random::Random};
 use nb::block;
 use uom::si::{f32::Length, length::meter};
 
@@ -31,7 +31,8 @@ where
     device_address: u8,
     state: State,
     pose: Pose,
-    correction_weight: f32,
+    a: f32,
+    b: Length,
 }
 
 impl<T, U> VL6180X<T, U>
@@ -59,7 +60,7 @@ where
     const STANDARD_DEVIATION: Length = Length {
         dimension: PhantomData,
         units: PhantomData,
-        value: 0.05,
+        value: 0.04,
     };
 
     pub fn new<'b, V: DelayMs<u32>>(
@@ -68,7 +69,8 @@ where
         delay: &'b mut V,
         new_address: u8, //7bit address
         pose: Pose,
-        correction_weight: f32,
+        multiplier: f32,
+        offset: Length,
     ) -> Self {
         let mut tof = Self {
             i2c,
@@ -76,7 +78,8 @@ where
             device_address: Self::DEFAULT_ADDRESS,
             state: State::Idle,
             pose,
-            correction_weight,
+            a: multiplier,
+            b: offset,
         };
 
         tof.init(delay, new_address);
@@ -201,7 +204,7 @@ where
         &self.pose
     }
 
-    fn get_distance(&mut self) -> nb::Result<Sample<Length>, Self::Error> {
+    fn get_distance(&mut self) -> nb::Result<Random<Length>, Self::Error> {
         use State::*;
 
         match self.state {
@@ -224,8 +227,8 @@ where
 
                 self.state = Idle;
 
-                Ok(Sample {
-                    mean: self.correction_weight * Length::new::<meter>(distance as f32 / 1000.0),
+                Ok(Random {
+                    mean: self.a * Length::new::<meter>(distance as f32 / 1000.0) + self.b,
                     standard_deviation: Self::STANDARD_DEVIATION,
                 })
             }
