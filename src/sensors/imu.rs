@@ -27,7 +27,7 @@ impl From<Infallible> for ImuError {
 }
 
 pub struct ICM20648<T, U> {
-    pub spi: T,
+    spi: T,
     cs: U,
     accel_offset: Acceleration,
     gyro_offset: AngularVelocity,
@@ -69,10 +69,11 @@ where
 
     const CALIBRATION_NUM: u16 = 1000;
 
-    pub fn new<'a, V, W>(spi: T, cs: U, delay: &'a mut V, timer: &'a mut W) -> Self
+    pub fn new<'a, V, W, F>(spi: T, cs: U, delay: &'a mut V, timer: &'a mut W, post_init: F) -> Self
     where
         V: DelayMs<u32>,
         W: CountDown,
+        F: Fn(T) -> T,
     {
         let mut icm = Self {
             spi,
@@ -82,6 +83,8 @@ where
         };
 
         icm.init(delay, timer);
+
+        icm.spi = (post_init)(icm.spi);
 
         icm
     }

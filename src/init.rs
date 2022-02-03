@@ -205,13 +205,13 @@ pub fn init_bag() -> Bag {
             let mut cs = gpioc.pc15.into_push_pull_output();
             cs.set_high().unwrap();
 
-            let mut imu = ICM20648::new(spi, cs, &mut delay, &mut timer);
-            imu.spi = imu.spi.init(
-                stm32f4xx_hal::hal::spi::MODE_3,
-                6_250_000.hz(),
-                clocks.pclk2(),
-            );
-            imu
+            ICM20648::new(spi, cs, &mut delay, &mut timer, |spi| {
+                spi.init(
+                    stm32f4xx_hal::hal::spi::MODE_3,
+                    6_250_000.hz(),
+                    clocks.pclk2(),
+                )
+            })
         };
 
         let (left_motor, right_motor) = {
