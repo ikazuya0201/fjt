@@ -21,16 +21,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloc-cortex-m"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5069e21ec61f3b243a4a4c56d920d3206e6ee86022a67c23e9fe36eb60fc1efd"
-dependencies = [
- "cortex-m 0.7.4",
- "linked_list_allocator",
-]
-
-[[package]]
 name = "as-slice"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -197,16 +187,15 @@ dependencies = [
 name = "fjt"
 version = "0.1.0"
 dependencies = [
- "alloc-cortex-m",
  "cortex-m 0.6.7",
  "cortex-m-rt",
  "embedded-hal",
  "heapless",
  "jlink_rtt",
- "lazy_static",
- "mousecore",
- "nb 1.0.0",
- "sensors",
+ "micromath",
+ "mousecore2",
+ "sensors2",
+ "spin 0.7.1",
  "stm32f4xx-hal",
  "uom",
 ]
@@ -272,15 +261,6 @@ name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
-dependencies = [
- "spin 0.5.2",
-]
-
-[[package]]
-name = "linked_list_allocator"
-version = "0.8.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "822add9edb1860698b79522510da17bef885171f75aa395cff099d770c609c24"
 
 [[package]]
 name = "lock_api"
@@ -299,21 +279,19 @@ checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
 
 [[package]]
 name = "micromath"
-version = "1.1.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc4010833aea396656c2f91ee704d51a6f1329ec2ab56ffd00bfd56f7481ea94"
+checksum = "39617bc909d64b068dcffd0e3e31679195b5576d0c83fadc52690268cc2b2b55"
 
 [[package]]
-name = "mousecore"
+name = "mousecore2"
 version = "0.1.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#fe4a9390523f04328aca2a95a5a74a770b86d496"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#e46fc04674dbb940462f4eaf2158491311c449fd"
 dependencies = [
  "heapless",
  "micromath",
- "nb 0.1.3",
- "num-traits",
  "serde",
- "spin 0.7.1",
+ "typed-builder",
  "typenum",
  "uom",
 ]
@@ -475,12 +453,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
-name = "sensors"
+name = "sensors2"
 version = "0.1.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#fe4a9390523f04328aca2a95a5a74a770b86d496"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#e46fc04674dbb940462f4eaf2158491311c449fd"
 dependencies = [
  "embedded-hal",
- "mousecore",
  "nb 1.0.0",
  "uom",
 ]
@@ -504,12 +481,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
@@ -572,6 +543,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-xid",
+]
+
+[[package]]
+name = "typed-builder"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a46ee5bd706ff79131be9c94e7edcb82b703c487766a114434e5790361cf08c5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
