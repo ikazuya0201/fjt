@@ -10,7 +10,6 @@ use stm32f4xx_hal::{
     },
     pwm::*,
     qei::Qei,
-    spi::Spi,
     stm32::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4},
 };
 
@@ -26,16 +25,15 @@ pub type LeftEncoder = MA702GQ<Qei<TIM4, (PB6<Alternate<AF2>>, PB7<Alternate<AF2
 
 pub type RightEncoder = MA702GQ<Qei<TIM2, (PA0<Alternate<AF1>>, PA1<Alternate<AF1>>)>>;
 
-pub type Imu = ICM20648<
-    Spi<
-        SPI1,
-        (
-            PB3<Alternate<AF5>>,
-            PB4<Alternate<AF5>>,
-            PB5<Alternate<AF5>>,
-        ),
-    >,
-    PC15<Output<PushPull>>,
+pub type Imu = ICM20648<PC15<Output<PushPull>>>;
+
+pub type Spi = stm32f4xx_hal::spi::Spi<
+    SPI1,
+    (
+        PB3<Alternate<AF5>>,
+        PB4<Alternate<AF5>>,
+        PB5<Alternate<AF5>>,
+    ),
 >;
 
 pub type I2c = stm32f4xx_hal::i2c::I2c<I2C1, (PB8<AlternateOD<AF4>>, PB9<AlternateOD<AF4>>)>;
