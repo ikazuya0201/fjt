@@ -35,7 +35,9 @@ fn panic(info: &PanicInfo) -> ! {
     unsafe {
         OPERATOR.force_unlock();
     }
-    OPERATOR.lock().stop();
+    let mut operator = OPERATOR.lock();
+    operator.stop();
+    operator.turn_on_panic_led();
     loop {}
 }
 

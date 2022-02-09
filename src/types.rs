@@ -3,7 +3,7 @@ use stm32f4xx_hal::{
     adc::Adc,
     gpio::{
         gpioa::{PA0, PA1, PA15, PA7},
-        gpiob::{PB3, PB4, PB5, PB6, PB7, PB8, PB9},
+        gpiob::{PB1, PB3, PB4, PB5, PB6, PB7, PB8, PB9},
         gpioc::PC15,
         gpioh::{PH0, PH1},
         Alternate, AlternateOD, Analog, Output, PushPull, AF1, AF2, AF4, AF5,
@@ -13,6 +13,8 @@ use stm32f4xx_hal::{
     spi::Spi,
     stm32::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4},
 };
+
+pub type PanicLed = PB1<Output<PushPull>>;
 
 pub type Voltmeter = sensors2::voltmeter::Voltmeter<Adc<ADC1>, ADC1, PA7<Analog>>;
 
