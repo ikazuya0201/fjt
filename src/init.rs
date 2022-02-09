@@ -18,7 +18,7 @@ use mousecore2::{
         straight::{StraightGenerator, StraightTrajectory},
         ShiftTrajectory, StopTrajectory,
     },
-    wall::{Normal, Pose, WallDetector, Walls},
+    wall::{Pose, WallDetector, Walls},
 };
 use sensors2::{encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180X};
 use spin::{Lazy, Mutex};
@@ -58,6 +58,11 @@ use crate::TIMER_TIM5;
 const W: u8 = 32;
 const START_LENGTH: Length = Length {
     value: 0.02,
+    units: PhantomData,
+    dimension: PhantomData,
+};
+const SENSOR_STDDEV: Length = Length {
+    value: 0.04,
     units: PhantomData,
     dimension: PhantomData,
 };
@@ -558,11 +563,8 @@ impl Operator {
         macro_rules! detect {
             ($pos: ident) => {
                 if let Ok(distance) = self.tofs.$pos.distance(&mut self.i2c) {
-                    let distance = Normal {
-                        mean: self.tof_configs.$pos.1.slope * distance
-                            + self.tof_configs.$pos.1.intercept,
-                        stddev: Length::new::<meter>(0.04),
-                    };
+                    let distance = self.tof_configs.$pos.1.slope * distance
+                        + self.tof_configs.$pos.1.intercept;
                     let pose = Pose {
                         x: self.state.x.x + self.tof_configs.$pos.0.x * cos_th
                             - self.tof_configs.$pos.0.y * sin_th,
@@ -574,7 +576,8 @@ impl Operator {
 
                     let mut walls = WALLS.lock();
                     if let Some((coord, wall_state)) =
-                        self.detector.detect_and_update(&distance, &pose)
+                        self.detector
+                            .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
                     {
                         walls.update(&coord, &wall_state);
                     }
