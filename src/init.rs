@@ -51,7 +51,9 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use crate::types::{I2c, Imu, LeftEncoder, LeftMotor, RightEncoder, RightMotor, Tofs, Voltmeter};
+use crate::types::{
+    I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Tofs, Voltmeter,
+};
 use crate::TIMER_TIM5;
 
 const W: u8 = 32;
@@ -158,6 +160,8 @@ pub struct Operator {
     left: Trajectory,
     back: Trajectory,
     fin: Option<Trajectory>,
+
+    panic_led: PanicLed,
 }
 
 impl Operator {
@@ -493,6 +497,8 @@ impl Operator {
             left,
             back,
             fin: Some(fin),
+
+            panic_led: gpiob.pb1.into_push_pull_output(),
         }
     }
 
@@ -617,6 +623,10 @@ impl Operator {
             .apply(Default::default(), self.voltmeter.voltage());
         self.right_motor
             .apply(Default::default(), self.voltmeter.voltage());
+    }
+
+    pub fn turn_on_panic_led(&mut self) {
+        self.panic_led.set_high().unwrap();
     }
 }
 
