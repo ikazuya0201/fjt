@@ -1,0 +1,3 @@
+r
+loadfile ./target/thumbv7em-none-eabihf/release/fjt.bin
+q

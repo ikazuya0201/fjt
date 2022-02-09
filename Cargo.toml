@@ -11,9 +11,12 @@ opt-level = 3
 [dependencies]
 cortex-m = "0.6.3"
 cortex-m-rt = "0.6.12"
-nb = "1.0.0"
 jlink_rtt = "0.1.0"
-alloc-cortex-m = "0.4.0"
+micromath = "2.0.0"
+
+[dependencies.spin]
+version = "0.7.0"
+default-features = false
 
 [dependencies.heapless]
 version = "0.7.10"
@@ -24,19 +27,15 @@ version = "0.32.0"
 default-features = false
 features = ["si", "f32", "autoconvert"]
 
-[dependencies.lazy_static]
-version = "1.4.0"
-features = ["spin_no_std"]
-
 [dependencies.stm32f4xx-hal]
 version = "0.9.0"
 features = ["stm32f413", "rt"]
 
-[dependencies.mousecore]
+[dependencies.mousecore2]
 git = "https://github.com/ikazuya0201/mouse_components.git"
 branch = "master"
 
-[dependencies.sensors]
+[dependencies.sensors2]
 git = "https://github.com/ikazuya0201/mouse_components.git"
 branch = "master"
 

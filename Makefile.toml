@@ -1,0 +1,31 @@
+[tasks.build]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.bin]
+command = "arm-none-eabi-objcopy"
+args = [
+    "-O",
+    "binary",
+    "./target/thumbv7em-none-eabihf/release/fjt",
+    "./target/thumbv7em-none-eabihf/release/fjt.bin",
+]
+dependencies = ["build"]
+
+[tasks.load]
+command = "JLinkExe"
+args = [
+    "-device",
+    "STM32F413CH",
+    "-if",
+    "SWD",
+    "-speed",
+    "4000",
+    "-autoconnect",
+    "1",
+    "-CommanderScript",
+    "./load.jlink",
+]
+
+[tasks.run]
+dependencies = ["bin", "load"]
