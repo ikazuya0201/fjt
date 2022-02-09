@@ -29,7 +29,6 @@ use stm32f4xx_hal::{
     prelude::*,
     pwm::tim1,
     qei::Qei,
-    spi::Spi,
     stm32,
     timer::{Event, Timer},
 };
@@ -52,7 +51,7 @@ use uom::si::{
 };
 
 use crate::types::{
-    I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Tofs, Voltmeter,
+    I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Spi, Tofs, Voltmeter,
 };
 use crate::TIMER_TIM5;
 
@@ -144,6 +143,7 @@ pub struct Operator {
     state: State,
 
     i2c: I2c,
+    spi: Spi,
     imu: Imu,
     left_encoder: LeftEncoder,
     right_encoder: RightEncoder,
@@ -244,31 +244,30 @@ impl Operator {
             encoder
         };
 
-        let imu = {
-            let spi_pins = (
-                gpiob.pb3.into_alternate_af5(),
-                gpiob.pb4.into_alternate_af5(),
-                gpiob.pb5.into_alternate_af5(),
-            );
+        let spi_pins = (
+            gpiob.pb3.into_alternate_af5(),
+            gpiob.pb4.into_alternate_af5(),
+            gpiob.pb5.into_alternate_af5(),
+        );
+        let mut spi = Spi::spi1(
+            device_peripherals.SPI1,
+            spi_pins,
+            stm32f4xx_hal::hal::spi::MODE_3,
+            1_562_500.hz(),
+            clocks,
+        );
 
-            let spi = Spi::spi1(
-                device_peripherals.SPI1,
-                spi_pins,
-                stm32f4xx_hal::hal::spi::MODE_3,
-                1_562_500.hz(),
-                clocks,
-            );
+        let imu = {
             let mut cs = gpioc.pc15.into_push_pull_output();
             cs.set_high().unwrap();
 
-            ICM20648::new(spi, cs, &mut delay, &mut timer, |spi| {
-                spi.init(
-                    stm32f4xx_hal::hal::spi::MODE_3,
-                    6_250_000.hz(),
-                    clocks.pclk2(),
-                )
-            })
+            ICM20648::new(&mut spi, cs, &mut delay, &mut timer)
         };
+        spi = spi.init(
+            stm32f4xx_hal::hal::spi::MODE_3,
+            6_250_000.hz(),
+            clocks.pclk2(),
+        );
 
         let (left_motor, right_motor) = {
             let (mut pwm1, mut pwm2, mut pwm3, mut pwm4) = {
@@ -443,6 +442,7 @@ impl Operator {
             state,
 
             i2c,
+            spi,
             imu,
             voltmeter,
             left_encoder,
@@ -508,8 +508,11 @@ impl Operator {
             SensorValue {
                 left_distance: block!(self.left_encoder.distance()).unwrap(),
                 right_distance: block!(self.right_encoder.distance()).unwrap(),
-                translational_acceleration: block!(self.imu.translational_acceleration()).unwrap(),
-                angular_velocity: block!(self.imu.angular_velocity()).unwrap(),
+                translational_acceleration: block!(self
+                    .imu
+                    .translational_acceleration(&mut self.spi))
+                .unwrap(),
+                angular_velocity: block!(self.imu.angular_velocity(&mut self.spi)).unwrap(),
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
