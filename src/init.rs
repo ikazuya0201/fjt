@@ -10,8 +10,8 @@ use embedded_hal::prelude::*;
 use micromath::F32Ext;
 use mousecore2::{
     control::{ControlParameters, Controller, Target, Tracker},
-    solver::{AbsoluteDirection, Commander, Coordinate, RelativeDirection, SearchState, Searcher},
-    state::{AngleState, Estimator, LengthState, SensorValue, State},
+    estimate::{AngleState, Estimator, LengthState, SensorValue, State},
+    solve::{AbsoluteDirection, Commander, Coordinate, RelativeDirection, SearchState, Searcher},
     trajectory::{
         slalom::{SlalomConfig, SlalomDirection, SlalomGenerator, SlalomKind, SlalomTrajectory},
         spin::{SpinGenerator, SpinTrajectory},
