@@ -6,12 +6,22 @@ use core::{
 
 use cortex_m::interrupt::free;
 use embedded_hal::prelude::*;
+use heapless::{Deque, Vec};
 #[allow(unused_imports)]
 use micromath::F32Ext;
 use mousecore2::{
     control::{ControlParameters, Controller, Target, Tracker},
     estimate::{AngleState, Estimator, LengthState, SensorValue, State},
-    solve::{AbsoluteDirection, Commander, Coordinate, RelativeDirection, SearchState, Searcher},
+    solve::{
+        run::{
+            shortest_path, EdgeKind, Node, Posture as RunPosture,
+            TrajectoryKind as RunTrajectoryKind,
+        },
+        search::{
+            Commander, Coordinate, Posture as SearchPosture, SearchState, Searcher,
+            TrajectoryKind as SearchTrajectoryKind, WallState,
+        },
+    },
     trajectory::{
         slalom::{SlalomConfig, SlalomDirection, SlalomGenerator, SlalomKind, SlalomTrajectory},
         spin::{SpinGenerator, SpinTrajectory},
@@ -25,6 +35,7 @@ use spin::{Lazy, Mutex};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
     delay::Delay,
+    interrupt,
     nb::block,
     prelude::*,
     pwm::tim1,
@@ -32,6 +43,7 @@ use stm32f4xx_hal::{
     stm32,
     timer::{Event, Timer},
 };
+use typed_builder::TypedBuilder;
 use uom::si::{
     acceleration::meter_per_second_squared,
     angle::degree,
@@ -66,18 +78,13 @@ const SENSOR_STDDEV: Length = Length {
     units: PhantomData,
     dimension: PhantomData,
 };
+const PATH_MAX: usize = 32 * 32;
 
 pub static OPERATOR: Lazy<Mutex<Operator>> = Lazy::new(|| Mutex::new(Operator::new()));
 pub static SOLVER: Lazy<Mutex<Solver>> = Lazy::new(|| Mutex::new(Solver::new()));
 static WALLS: Lazy<Mutex<Walls<W>>> = Lazy::new(|| Mutex::new(Walls::new()));
 static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
-    Mutex::new(
-        SearchState::new(
-            Coordinate::new(0, 0, true).unwrap(),
-            AbsoluteDirection::North,
-        )
-        .unwrap(),
-    )
+    Mutex::new(SearchState::new(Coordinate::new(0, 1).unwrap(), SearchPosture::North).unwrap())
 });
 static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
 static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
@@ -93,6 +100,24 @@ const SQUARE_WIDTH: Length = Length {
     units: PhantomData,
 };
 
+pub fn tick_on() {
+    free(|_cs| {
+        cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
+        unsafe {
+            cortex_m::interrupt::enable();
+            cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
+        }
+    });
+}
+
+pub fn tick_off() {
+    free(|_cs| {
+        cortex_m::interrupt::disable();
+        cortex_m::peripheral::NVIC::mask(interrupt::TIM5);
+        cortex_m::peripheral::NVIC::pend(interrupt::TIM5);
+    });
+}
+
 type BackTrajectory = Chain<
     Chain<
         Chain<Chain<StraightTrajectory, StopTrajectory>, ShiftTrajectory<SpinTrajectory>>,
@@ -106,6 +131,8 @@ enum Trajectory {
     Straight(StraightTrajectory),
     Slalom(SlalomTrajectory),
     Back(BackTrajectory),
+    Stop(StopTrajectory),
+    Spin(SpinTrajectory),
 }
 
 struct Linear {
@@ -132,12 +159,21 @@ impl Iterator for Trajectory {
     type Item = Target;
 
     fn next(&mut self) -> Option<Self::Item> {
+        use Trajectory::*;
         match self {
-            Trajectory::Straight(inner) => inner.next(),
-            Trajectory::Slalom(inner) => inner.next(),
-            Trajectory::Back(inner) => inner.next(),
+            Straight(inner) => inner.next(),
+            Slalom(inner) => inner.next(),
+            Back(inner) => inner.next(),
+            Spin(inner) => inner.next(),
+            Stop(inner) => inner.next(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    Search,
+    Return,
 }
 
 pub struct Operator {
@@ -158,13 +194,8 @@ pub struct Operator {
     tof_configs: TofConfigs,
     voltmeter: Voltmeter,
 
-    trajectory: ShiftTrajectory<Trajectory>,
-    next_trajectory: Option<ShiftTrajectory<Trajectory>>,
-    front: Trajectory,
-    right: Trajectory,
-    left: Trajectory,
-    back: Trajectory,
-    fin: Option<Trajectory>,
+    manager: TrajectoryManager,
+    mode: Mode,
 
     panic_led: PanicLed,
 }
@@ -336,103 +367,27 @@ impl Operator {
         let estimator = Estimator::builder().period(period).build();
         let detector = WallDetector::<W>::default();
 
-        let (init, fin, front, right, left, back) = {
-            let search_velocity = Velocity::new::<meter_per_second>(0.3);
-            let v_max = Velocity::new::<meter_per_second>(2.0);
-            let a_max = Acceleration::new::<meter_per_second_squared>(10.0);
-            let j_max = Jerk::new::<meter_per_second_cubed>(50.0);
-
-            let square_width = SQUARE_WIDTH;
-            let front_offset = FRONT_OFFSET;
-
-            let slalom_config = SlalomConfig::new(square_width, front_offset);
-            let slalom = SlalomGenerator::new(period, v_max, a_max, j_max);
-            let spin = SpinGenerator::new(
-                AngularVelocity::new::<degree_per_second>(1440.0),
-                AngularAcceleration::new::<degree_per_second_squared>(14400.0),
-                AngularJerk::new::<degree_per_second_cubed>(57600.0),
-                period,
-            );
-            let straight = StraightGenerator::new(v_max, a_max, j_max, period);
-            (
-                Trajectory::Straight(straight.generate(
-                    square_width / 2.0 + front_offset,
-                    Default::default(),
-                    search_velocity,
-                )),
-                Trajectory::Straight(straight.generate(
-                    square_width / 2.0 - front_offset,
-                    search_velocity,
-                    Default::default(),
-                )),
-                Trajectory::Straight(StraightGenerator::generate_constant(
-                    square_width,
-                    search_velocity,
-                    period,
-                )),
-                Trajectory::Slalom(slalom.generate_constant_slalom(
-                    slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Right),
-                    search_velocity,
-                )),
-                Trajectory::Slalom(slalom.generate_constant_slalom(
-                    slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Left),
-                    search_velocity,
-                )),
-                Trajectory::Back(
-                    straight
-                        .generate(
-                            square_width / 2.0 - front_offset,
-                            search_velocity,
-                            Default::default(),
-                        )
-                        .chain(StopTrajectory::new(
-                            Pose {
-                                x: square_width / 2.0 - front_offset,
-                                ..Default::default()
-                            },
-                            period,
-                            Time::new::<second>(0.1),
-                        ))
-                        .chain(ShiftTrajectory::new(
-                            Pose {
-                                x: square_width / 2.0 - front_offset,
-                                ..Default::default()
-                            },
-                            spin.generate(Angle::new::<degree>(180.0)),
-                        ))
-                        .chain(StopTrajectory::new(
-                            Pose {
-                                x: square_width / 2.0 - front_offset,
-                                y: Default::default(),
-                                theta: Angle::new::<degree>(180.0),
-                            },
-                            period,
-                            Time::new::<second>(0.1),
-                        ))
-                        .chain(ShiftTrajectory::new(
-                            Pose {
-                                x: square_width / 2.0 - front_offset,
-                                y: Default::default(),
-                                theta: Angle::new::<degree>(180.0),
-                            },
-                            straight.generate(
-                                square_width / 2.0 + front_offset,
-                                Default::default(),
-                                search_velocity,
-                            ),
-                        )),
-                ),
-            )
-        };
-
-        let trajectory: ShiftTrajectory<Trajectory> = ShiftTrajectory::new(
-            Pose {
+        let search_manager = TrajectoryConfig::builder()
+            .search_velocity(Velocity::new::<meter_per_second>(0.3))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
+            .v_max(Velocity::new::<meter_per_second>(1.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
+            .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
+            .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
+            .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
+                14400.0,
+            ))
+            .spin_j_max(AngularJerk::new::<degree_per_second_cubed>(57600.0))
+            .period(period)
+            .square_width(SQUARE_WIDTH)
+            .front_offset(FRONT_OFFSET)
+            .initial_pose(Pose {
                 x: state.x.x,
                 y: state.y.x,
                 theta: state.theta.x,
-            },
-            init,
-        );
+            })
+            .build()
+            .into();
 
         timer.listen(Event::TimeOut);
         free(|cs| {
@@ -495,19 +450,27 @@ impl Operator {
                 ),
             },
 
-            trajectory,
-            next_trajectory: None,
-            front,
-            right,
-            left,
-            back,
-            fin: Some(fin),
+            manager: search_manager,
+            mode: Mode::Search,
 
             panic_led: gpiob.pb1.into_push_pull_output(),
         }
     }
 
     pub fn control(&mut self) {
+        match self.mode {
+            Mode::Search => self.control_search(),
+            Mode::Return => self.control_return(),
+        }
+    }
+
+    fn control_return(&mut self) {
+        self.estimate();
+        let target = self.manager.target().unwrap();
+        self.track(&target);
+    }
+
+    fn estimate(&mut self) {
         // estimate
         let sensor_value = {
             SensorValue {
@@ -521,26 +484,10 @@ impl Operator {
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
+    }
 
-        // track
-        let target = if let Some(target) = self.trajectory.next() {
-            target
-        } else if let Some(next) = self.next_trajectory.take() {
-            self.trajectory = next;
-            self.trajectory.next().unwrap()
-        } else if IS_SEARCH_FINISH.load(Ordering::SeqCst) {
-            if let Some(fin) = self.fin.take() {
-                let pose =
-                    Pose::from_search_state::<W>(STATE.lock().clone(), SQUARE_WIDTH, FRONT_OFFSET);
-                self.trajectory = ShiftTrajectory::new(pose, fin);
-                self.trajectory.next().unwrap()
-            } else {
-                unreachable!()
-            }
-        } else {
-            unreachable!()
-        };
-        let (control_target, control_state) = self.tracker.track(&self.state, &target);
+    fn track(&mut self, target: &Target) {
+        let (control_target, control_state) = self.tracker.track(&self.state, target);
         let vol = self.controller.control(&control_target, &control_state);
 
         const THRES: ElectricPotential = ElectricPotential {
@@ -556,6 +503,39 @@ impl Operator {
 
         self.left_motor.apply(vol.left, self.voltmeter.voltage());
         self.right_motor.apply(vol.right, self.voltmeter.voltage());
+    }
+
+    fn control_search(&mut self) {
+        self.estimate();
+
+        if IS_SEARCH_FINISH.load(Ordering::SeqCst) && self.manager.next_is_none() {
+            self.manager.set_final(Pose::from_search_state(
+                STATE.lock().clone(),
+                SQUARE_WIDTH,
+                FRONT_OFFSET,
+            ));
+        }
+        let target = if let Some(target) = self.manager.target() {
+            target
+        } else {
+            self.stop();
+            tick_off();
+            let rev_start = Node::new(0, 0, RunPosture::South).unwrap();
+            let state = STATE.lock();
+            let x = state.x();
+            let y = state.y();
+            let (x, y, pos) = match state.posture() {
+                SearchPosture::North => (x, y + 1, RunPosture::North),
+                SearchPosture::East => (x + 1, y, RunPosture::East),
+                SearchPosture::South => (x, y - 1, RunPosture::South),
+                SearchPosture::West => (x - 1, y, RunPosture::West),
+            };
+            self.init_run(Node::new(x, y, pos).unwrap(), |node| &rev_start == node);
+            self.mode = Mode::Return;
+            tick_on();
+            return;
+        };
+        self.track(&target);
 
         // detect wall
         let cos_th = self.state.theta.x.value.cos();
@@ -588,7 +568,7 @@ impl Operator {
         detect!(right);
         detect!(left);
 
-        if self.next_trajectory.is_some() {
+        if !self.manager.next_is_none() {
             return;
         }
 
@@ -602,17 +582,7 @@ impl Operator {
                         let pose =
                             Pose::from_search_state::<W>(state.clone(), SQUARE_WIDTH, FRONT_OFFSET);
                         let dir = state.update(&next_coord).unwrap();
-                        macro_rules! gen {
-                            ($traj: expr) => {
-                                ShiftTrajectory::new(pose, $traj.clone())
-                            };
-                        }
-                        self.next_trajectory = Some(match dir {
-                            RelativeDirection::Front => gen!(self.front),
-                            RelativeDirection::Right => gen!(self.right),
-                            RelativeDirection::Left => gen!(self.left),
-                            RelativeDirection::Back => gen!(self.back),
-                        });
+                        self.manager.set(pose, dir);
                         commander.take();
                     }
                     Some(Ok(None)) => (),
@@ -622,6 +592,59 @@ impl Operator {
             }
             _ => (),
         }
+    }
+
+    fn init_run(&mut self, start: Node<W>, is_goal: impl Fn(&Node<W>) -> bool + Copy) {
+        use RunPosture::*;
+
+        let (_, path, npos) = IntoIterator::into_iter([North, East, South, West])
+            .filter_map(|pos| {
+                shortest_path(
+                    Node::new(start.x(), start.y(), pos).unwrap(),
+                    is_goal,
+                    |coord| {
+                        !matches!(
+                            WALLS.lock().wall_state(coord),
+                            WallState::Checked { exists: false }
+                        )
+                    },
+                    |kind| match kind {
+                        EdgeKind::Straight(x) => *x as u16 * 10,
+                        EdgeKind::StraightDiagonal(x) => *x as u16 * 7,
+                        EdgeKind::Slalom45 => 12,
+                        EdgeKind::Slalom90 => 15,
+                        EdgeKind::Slalom135 => 20,
+                        EdgeKind::Slalom180 => 25,
+                        EdgeKind::SlalomDiagonal90 => 15,
+                    },
+                )
+                .map(|(path, cost)| (cost, path, pos))
+            })
+            .min_by_key(|v| v.0)
+            .unwrap();
+
+        let pos_to_u8 = |pos| {
+            use RunPosture::*;
+            match pos {
+                North => 0u8,
+                East => 1,
+                South => 2,
+                West => 3,
+                _ => unreachable!(),
+            }
+        };
+
+        let pos = pos_to_u8(start.posture());
+        let npos = pos_to_u8(npos);
+
+        let init_angle = Angle::new::<degree>(match (4 + npos - pos) % 4 {
+            0 => 0.0,
+            1 => -90.0,
+            2 => 180.0,
+            3 => 90.0,
+            _ => unreachable!(),
+        });
+        self.manager.init_run(path, init_angle);
     }
 
     pub fn stop(&mut self) {
@@ -644,10 +667,10 @@ impl Solver {
     pub fn new() -> Self {
         Self {
             searcher: Searcher::new(
-                Coordinate::new(0, 0, true).unwrap(),
+                Coordinate::new(0, 1).unwrap(),
                 &[
-                    Coordinate::new(1, 0, true).unwrap(),
-                    Coordinate::new(1, 0, false).unwrap(),
+                    Coordinate::new(2, 1).unwrap(),
+                    Coordinate::new(3, 0).unwrap(),
                 ],
             ),
         }
@@ -689,6 +712,293 @@ impl Solver {
                 IS_SEARCH_FINISH.store(true, Ordering::SeqCst);
             }
             Err(err) => unreachable!("{:?}", err),
+        }
+    }
+}
+
+#[derive(TypedBuilder)]
+struct TrajectoryConfig {
+    square_width: Length,
+    front_offset: Length,
+    v_max: Velocity,
+    a_max: Acceleration,
+    j_max: Jerk,
+    spin_v_max: AngularVelocity,
+    spin_a_max: AngularAcceleration,
+    spin_j_max: AngularJerk,
+    search_velocity: Velocity,
+    period: Time,
+    initial_pose: Pose,
+    run_slalom_velocity: Velocity,
+}
+
+struct TrajectoryManager {
+    trajectories: Deque<ShiftTrajectory<Trajectory>, 3>,
+    fin: Option<Trajectory>,
+    front: Trajectory,
+    right: Trajectory,
+    left: Trajectory,
+    back: Trajectory,
+
+    square_width: Length,
+    period: Time,
+    run_slalom_velocity: Velocity,
+
+    straight: StraightGenerator,
+    spin: SpinGenerator,
+    slalom: SlalomGenerator,
+    slalom_config: SlalomConfig,
+
+    run_iter: usize,
+    cur_velocity: Velocity,
+    is_run: bool,
+    path: Vec<Node<W>, PATH_MAX>,
+}
+
+impl TrajectoryManager {
+    fn target(&mut self) -> Option<Target> {
+        if self.is_run && !self.trajectories.is_full() && self.run_iter < self.path.len() - 1 {
+            use RunTrajectoryKind::*;
+            let i = self.run_iter;
+            let velocity = self.cur_velocity;
+
+            let pose = Pose::from_node(self.path[i], self.square_width);
+            let kind = self.path[i]
+                .trajectory_kind(&self.path[i + 1])
+                .unwrap_or_else(|| unreachable!("{:?}", (self.path[i], self.path[i + 1])));
+            let (start, middle, end) = if i <= 1 {
+                (velocity, self.run_slalom_velocity, self.run_slalom_velocity)
+            } else if i + 2 == self.path.len() {
+                (velocity, velocity * 0.666_666_7, Default::default())
+            } else if i + 3 == self.path.len() {
+                (velocity, velocity * 0.5, velocity * 0.5)
+            } else {
+                (
+                    self.run_slalom_velocity,
+                    self.run_slalom_velocity,
+                    self.run_slalom_velocity,
+                )
+            };
+            let (trajectory, terminal_velocity) = match kind {
+                Straight(x) => {
+                    let (trajectory, terminal_velocity) = self
+                        .straight
+                        .generate_with_terminal_velocity(x as f32 * self.square_width, start, end);
+                    (
+                        ShiftTrajectory::new(pose, Trajectory::Straight(trajectory)),
+                        terminal_velocity,
+                    )
+                }
+                StraightDiagonal(x) => {
+                    let (trajectory, terminal_velocity) =
+                        self.straight.generate_with_terminal_velocity(
+                            x as f32 * self.square_width / 2.0f32.sqrt(),
+                            start,
+                            end,
+                        );
+                    (
+                        ShiftTrajectory::new(pose, Trajectory::Straight(trajectory)),
+                        terminal_velocity,
+                    )
+                }
+                Slalom(kind, dir) => {
+                    let (trajectory, terminal_velocity) =
+                        self.slalom.generate_slalom_with_terminal_velocity(
+                            self.slalom_config.parameters(kind, dir),
+                            start,
+                            middle,
+                            end,
+                        );
+                    (
+                        ShiftTrajectory::new(pose, Trajectory::Slalom(trajectory)),
+                        terminal_velocity,
+                    )
+                }
+            };
+            self.cur_velocity = terminal_velocity;
+            self.trajectories.push_back(trajectory).ok();
+            self.run_iter += 1;
+        }
+
+        let front = self.trajectories.front_mut()?;
+        if let Some(target) = front.next() {
+            Some(target)
+        } else {
+            core::mem::drop(front);
+            self.trajectories.pop_front();
+            self.trajectories.front_mut()?.next()
+        }
+    }
+
+    fn set_final(&mut self, pose: Pose) {
+        if let Some(fin) = self.fin.take() {
+            self.trajectories
+                .push_back(ShiftTrajectory::new(pose, fin))
+                .ok();
+        }
+    }
+
+    fn next_is_none(&self) -> bool {
+        self.trajectories.len() < 2
+    }
+
+    fn set(&mut self, pose: Pose, kind: SearchTrajectoryKind) {
+        use SearchTrajectoryKind::*;
+
+        self.trajectories
+            .push_back(ShiftTrajectory::new(
+                pose,
+                match kind {
+                    Front => self.front.clone(),
+                    Right => self.right.clone(),
+                    Left => self.left.clone(),
+                    Back => self.back.clone(),
+                },
+            ))
+            .ok();
+    }
+
+    fn init_run(&mut self, path: Vec<Node<W>, PATH_MAX>, init_angle: Angle) {
+        let init_pose = {
+            let mut pose = Pose::from_node(path[0], self.square_width);
+            pose.theta -= init_angle;
+            pose
+        };
+        self.trajectories
+            .push_back(ShiftTrajectory::new(
+                init_pose,
+                if init_angle == Angle::default() {
+                    Trajectory::Stop(StopTrajectory::new(
+                        Default::default(),
+                        self.period,
+                        Time::new::<second>(0.5),
+                    ))
+                } else {
+                    Trajectory::Spin(self.spin.generate(init_angle))
+                },
+            ))
+            .ok();
+        self.run_iter = 0;
+        self.path = path;
+        self.is_run = true;
+        self.cur_velocity = Default::default();
+    }
+}
+
+impl From<TrajectoryConfig> for TrajectoryManager {
+    fn from(
+        TrajectoryConfig {
+            square_width,
+            front_offset,
+            v_max,
+            a_max,
+            j_max,
+            spin_v_max,
+            spin_a_max,
+            spin_j_max,
+            search_velocity,
+            period,
+            initial_pose,
+            run_slalom_velocity,
+        }: TrajectoryConfig,
+    ) -> Self {
+        let slalom_config = SlalomConfig::new(square_width, front_offset);
+        let slalom = SlalomGenerator::new(period, v_max, a_max, j_max);
+        let spin = SpinGenerator::new(spin_v_max, spin_a_max, spin_j_max, period);
+        let straight = StraightGenerator::new(v_max, a_max, j_max, period);
+
+        let init = Trajectory::Straight(straight.generate(
+            square_width / 2.0 + front_offset,
+            Default::default(),
+            search_velocity,
+        ));
+        let fin = Trajectory::Straight(straight.generate(
+            square_width / 2.0 - front_offset,
+            search_velocity,
+            Default::default(),
+        ));
+        let front = Trajectory::Straight(StraightGenerator::generate_constant(
+            square_width,
+            search_velocity,
+            period,
+        ));
+        let right = Trajectory::Slalom(slalom.generate_constant_slalom(
+            slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Right),
+            search_velocity,
+        ));
+        let left = Trajectory::Slalom(slalom.generate_constant_slalom(
+            slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Left),
+            search_velocity,
+        ));
+        let back = Trajectory::Back(
+            straight
+                .generate(
+                    square_width / 2.0 - front_offset,
+                    search_velocity,
+                    Default::default(),
+                )
+                .chain(StopTrajectory::new(
+                    Pose {
+                        x: square_width / 2.0 - front_offset,
+                        ..Default::default()
+                    },
+                    period,
+                    Time::new::<second>(0.1),
+                ))
+                .chain(ShiftTrajectory::new(
+                    Pose {
+                        x: square_width / 2.0 - front_offset,
+                        ..Default::default()
+                    },
+                    spin.generate(Angle::new::<degree>(180.0)),
+                ))
+                .chain(StopTrajectory::new(
+                    Pose {
+                        x: square_width / 2.0 - front_offset,
+                        y: Default::default(),
+                        theta: Angle::new::<degree>(180.0),
+                    },
+                    period,
+                    Time::new::<second>(0.1),
+                ))
+                .chain(ShiftTrajectory::new(
+                    Pose {
+                        x: square_width / 2.0 - front_offset,
+                        y: Default::default(),
+                        theta: Angle::new::<degree>(180.0),
+                    },
+                    straight.generate(
+                        square_width / 2.0 + front_offset,
+                        Default::default(),
+                        search_velocity,
+                    ),
+                )),
+        );
+        let mut trajectories = Deque::new();
+        trajectories
+            .push_back(ShiftTrajectory::new(initial_pose, init))
+            .ok();
+        Self {
+            trajectories,
+            fin: Some(fin),
+            front,
+            left,
+            right,
+            back,
+
+            square_width,
+            period,
+            run_slalom_velocity,
+
+            straight,
+            spin,
+            slalom,
+            slalom_config,
+
+            run_iter: 0,
+            path: Vec::new(),
+            cur_velocity: Default::default(),
+            is_run: false,
         }
     }
 }
