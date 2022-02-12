@@ -36,6 +36,7 @@ use spin::{Lazy, Mutex};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
     delay::Delay,
+    dwt::{ClockDuration, Dwt, DwtExt},
     interrupt,
     nb::block,
     prelude::*,
@@ -90,6 +91,7 @@ static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
 });
 pub static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
 pub static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
+static DWT: Mutex<Option<Dwt>> = Mutex::new(None);
 
 const FRONT_OFFSET: Length = Length {
     value: 0.01,
@@ -410,6 +412,12 @@ impl Operator {
             TIMER_TIM5.borrow(cs).replace(Some(timer));
         });
 
+        *DWT.lock() = Some(
+            cortex_m_peripherals
+                .DWT
+                .constrain(cortex_m_peripherals.DCB, clocks),
+        );
+
         Operator {
             tracker,
             detector,
@@ -722,6 +730,13 @@ impl Operator {
 
     pub fn turn_on_panic_led(&mut self) {
         self.panic_led.set_high().unwrap();
+    }
+
+    #[allow(unused)]
+    pub fn measure(&mut self) -> ClockDuration {
+        DWT.lock().as_mut().unwrap().measure(|| {
+            self.control_search();
+        })
     }
 }
 
