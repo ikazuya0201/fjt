@@ -13,6 +13,7 @@ cortex-m = "0.6.3"
 cortex-m-rt = "0.6.12"
 jlink_rtt = "0.1.0"
 micromath = "2.0.0"
+typed-builder = "0.9.1"
 
 [dependencies.spin]
 version = "0.7.0"

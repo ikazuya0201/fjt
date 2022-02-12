@@ -29,3 +29,16 @@ args = [
 
 [tasks.run]
 dependencies = ["bin", "load"]
+
+[tasks.connect]
+command = "JLinkExe"
+args = [
+    "-device",
+    "STM32F413CH",
+    "-if",
+    "SWD",
+    "-speed",
+    "4000",
+    "-autoconnect",
+    "1",
+]

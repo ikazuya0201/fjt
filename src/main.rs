@@ -21,7 +21,7 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 
-use init::{OPERATOR, SOLVER};
+use init::{tick_on, OPERATOR, SOLVER};
 
 static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
 
@@ -34,10 +34,15 @@ fn panic(info: &PanicInfo) -> ! {
     writeln!(out, "{:?}", info).ok();
     unsafe {
         OPERATOR.force_unlock();
+        init::COMMANDER.force_unlock();
+        init::WALLS.force_unlock();
     }
     let mut operator = OPERATOR.lock();
     operator.stop();
     operator.turn_on_panic_led();
+    writeln!(out, "{:?}", operator).ok();
+    writeln!(out, "{:?}", init::COMMANDER.lock()).ok();
+    writeln!(out, "{}", init::WALLS.lock()).ok();
     loop {}
 }
 
@@ -61,13 +66,7 @@ fn main() -> ! {
     Lazy::force(&SOLVER);
     Lazy::force(&OPERATOR);
 
-    free(|_cs| {
-        cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
-        unsafe {
-            cortex_m::interrupt::enable();
-            cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
-        }
-    });
+    tick_on();
 
     loop {
         SOLVER.lock().search();
