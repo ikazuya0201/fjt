@@ -1,4 +1,5 @@
 use core::{
+    fmt,
     iter::Chain,
     marker::PhantomData,
     sync::atomic::{AtomicBool, Ordering},
@@ -83,12 +84,12 @@ const PATH_MAX: usize = 32 * 32;
 
 pub static OPERATOR: Lazy<Mutex<Operator>> = Lazy::new(|| Mutex::new(Operator::new()));
 pub static SOLVER: Lazy<Mutex<Solver>> = Lazy::new(|| Mutex::new(Solver::new()));
-static WALLS: Lazy<Mutex<Walls<W>>> = Lazy::new(|| Mutex::new(Walls::new()));
+pub static WALLS: Lazy<Mutex<Walls<W>>> = Lazy::new(|| Mutex::new(Walls::new()));
 static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
     Mutex::new(SearchState::new(Coordinate::new(0, 1).unwrap(), SearchPosture::North).unwrap())
 });
-static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
-static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
+pub static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
+pub static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
 
 const FRONT_OFFSET: Length = Length {
     value: 0.01,
@@ -127,13 +128,15 @@ type BackTrajectory = Chain<
     ShiftTrajectory<StraightTrajectory>,
 >;
 
+type SetupTrajectory = Chain<Chain<StopTrajectory, SpinTrajectory>, StopTrajectory>;
+
 #[derive(Clone)]
 enum Trajectory {
     Straight(StraightTrajectory),
     Slalom(SlalomTrajectory),
     Back(BackTrajectory),
     Stop(StopTrajectory),
-    Spin(SpinTrajectory),
+    Setup(SetupTrajectory),
 }
 
 struct Linear {
@@ -165,8 +168,8 @@ impl Iterator for Trajectory {
             Straight(inner) => inner.next(),
             Slalom(inner) => inner.next(),
             Back(inner) => inner.next(),
-            Spin(inner) => inner.next(),
             Stop(inner) => inner.next(),
+            Setup(inner) => inner.next(),
         }
     }
 }
@@ -175,6 +178,7 @@ impl Iterator for Trajectory {
 enum Mode {
     Search,
     Return,
+    Run,
 }
 
 pub struct Operator {
@@ -202,6 +206,14 @@ pub struct Operator {
     mode: Mode,
 
     panic_led: PanicLed,
+}
+
+impl fmt::Debug for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Operator")
+            .field("manager", &self.manager)
+            .finish()
+    }
 }
 
 impl Operator {
@@ -374,7 +386,7 @@ impl Operator {
         let search_manager = TrajectoryConfig::builder()
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
-            .v_max(Velocity::new::<meter_per_second>(2.0))
+            .v_max(Velocity::new::<meter_per_second>(1.0))
             .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
@@ -468,13 +480,35 @@ impl Operator {
         match self.mode {
             Mode::Search => self.control_search(),
             Mode::Return => self.control_return(),
+            Mode::Run => self.control_run(),
         }
+    }
+
+    fn control_run(&mut self) {
+        self.estimate();
+        self.detect_and_correct();
+        let target = self.manager.target().unwrap();
+        self.track(&target);
     }
 
     fn control_return(&mut self) {
         self.estimate();
-        let target = self.manager.target().unwrap();
-        self.track(&target);
+        self.detect_and_correct();
+        if let Some(target) = self.manager.target() {
+            self.track(&target);
+        } else {
+            use RunPosture::*;
+
+            self.stop();
+            tick_off();
+            let goals =
+                [(2, 0, South), (2, 0, West)].map(|(x, y, pos)| Node::new(x, y, pos).unwrap());
+            self.init_run(Node::new(0, 0, South).unwrap(), |node| {
+                goals.iter().any(|goal| node == goal)
+            });
+            self.mode = Mode::Run;
+            tick_on();
+        }
     }
 
     fn estimate(&mut self) {
@@ -513,39 +547,7 @@ impl Operator {
         self.right_motor.apply(vol.right, self.voltmeter.voltage());
     }
 
-    fn control_search(&mut self) {
-        self.estimate();
-
-        if IS_SEARCH_FINISH.load(Ordering::SeqCst) && self.manager.next_is_none() {
-            self.manager.set_final(Pose::from_search_state(
-                STATE.lock().clone(),
-                SQUARE_WIDTH,
-                FRONT_OFFSET,
-            ));
-        }
-        let target = if let Some(target) = self.manager.target() {
-            target
-        } else {
-            self.stop();
-            tick_off();
-            let rev_start = Node::new(0, 0, RunPosture::South).unwrap();
-            let state = STATE.lock();
-            let x = state.x();
-            let y = state.y();
-            let (x, y, pos) = match state.posture() {
-                SearchPosture::North => (x, y + 1, RunPosture::North),
-                SearchPosture::East => (x + 1, y, RunPosture::East),
-                SearchPosture::South => (x, y - 1, RunPosture::South),
-                SearchPosture::West => (x - 1, y, RunPosture::West),
-            };
-            self.init_run(Node::new(x, y, pos).unwrap(), |node| &rev_start == node);
-            self.mode = Mode::Return;
-            tick_on();
-            return;
-        };
-        self.track(&target);
-
-        // detect wall
+    fn detect_and_correct(&mut self) {
         let cos_th = self.state.theta.x.value.cos();
         let sin_th = self.state.theta.x.value.sin();
         macro_rules! detect {
@@ -591,8 +593,48 @@ impl Operator {
         detect!(front);
         detect!(right);
         detect!(left);
+    }
 
-        if !self.manager.next_is_none() {
+    fn control_search(&mut self) {
+        self.estimate();
+
+        if let Some(target) = self.manager.target() {
+            self.track(&target);
+        } else {
+            if !IS_SEARCH_FINISH.load(Ordering::SeqCst) {
+                panic!("solve does not finish on time");
+            }
+
+            if self.manager.set_final(Pose::from_search_state(
+                STATE.lock().clone(),
+                SQUARE_WIDTH,
+                FRONT_OFFSET,
+            )) {
+                let target = self.manager.target().unwrap();
+                self.track(&target);
+            } else {
+                self.stop();
+                tick_off();
+                let rev_start = Node::new(0, 0, RunPosture::South).unwrap();
+                let state = STATE.lock();
+                let x = state.x();
+                let y = state.y();
+                let (x, y, pos) = match state.posture() {
+                    SearchPosture::North => (x, y + 1, RunPosture::North),
+                    SearchPosture::East => (x + 1, y, RunPosture::East),
+                    SearchPosture::South => (x, y - 1, RunPosture::South),
+                    SearchPosture::West => (x - 1, y, RunPosture::West),
+                };
+                self.init_run(Node::new(x, y, pos).unwrap(), |node| &rev_start == node);
+                self.mode = Mode::Return;
+                tick_on();
+                return;
+            }
+        };
+
+        self.detect_and_correct();
+
+        if self.manager.is_full() {
             return;
         }
 
@@ -779,6 +821,14 @@ struct TrajectoryManager {
     path: Vec<Node<W>, PATH_MAX>,
 }
 
+impl fmt::Debug for TrajectoryManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrajectoryManager")
+            .field("fin_is_none", &self.fin.is_none())
+            .finish()
+    }
+}
+
 impl TrajectoryManager {
     fn target(&mut self) -> Option<Target> {
         if self.is_run && !self.trajectories.is_full() && self.run_iter < self.path.len() - 1 {
@@ -854,16 +904,19 @@ impl TrajectoryManager {
         }
     }
 
-    fn set_final(&mut self, pose: Pose) {
+    fn set_final(&mut self, pose: Pose) -> bool {
         if let Some(fin) = self.fin.take() {
             self.trajectories
                 .push_back(ShiftTrajectory::new(pose, fin))
                 .ok();
+            true
+        } else {
+            false
         }
     }
 
-    fn next_is_none(&self) -> bool {
-        self.trajectories.len() < 2
+    fn is_full(&self) -> bool {
+        self.trajectories.is_full()
     }
 
     fn set(&mut self, pose: Pose, kind: SearchTrajectoryKind) {
@@ -898,7 +951,22 @@ impl TrajectoryManager {
                         Time::new::<second>(0.5),
                     ))
                 } else {
-                    Trajectory::Spin(self.spin.generate(init_angle))
+                    Trajectory::Setup(
+                        StopTrajectory::new(
+                            Default::default(),
+                            self.period,
+                            Time::new::<second>(0.5),
+                        )
+                        .chain(self.spin.generate(init_angle))
+                        .chain(StopTrajectory::new(
+                            Pose {
+                                theta: init_angle,
+                                ..Default::default()
+                            },
+                            self.period,
+                            Time::new::<second>(0.5),
+                        )),
+                    )
                 },
             ))
             .ok();

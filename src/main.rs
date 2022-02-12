@@ -34,10 +34,15 @@ fn panic(info: &PanicInfo) -> ! {
     writeln!(out, "{:?}", info).ok();
     unsafe {
         OPERATOR.force_unlock();
+        init::COMMANDER.force_unlock();
+        init::WALLS.force_unlock();
     }
     let mut operator = OPERATOR.lock();
     operator.stop();
     operator.turn_on_panic_led();
+    writeln!(out, "{:?}", operator).ok();
+    writeln!(out, "{:?}", init::COMMANDER.lock()).ok();
+    writeln!(out, "{}", init::WALLS.lock()).ok();
     loop {}
 }
 
