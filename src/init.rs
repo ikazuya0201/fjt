@@ -70,7 +70,7 @@ use crate::types::{
 };
 use crate::TIMER_TIM5;
 
-const W: u8 = 32;
+const W: u8 = 16;
 const START_LENGTH: Length = Length {
     value: 0.02,
     units: PhantomData,
@@ -360,7 +360,7 @@ impl Operator {
         let tracker = Tracker::builder()
             .period(period)
             .gain(120.0)
-            .dgain(8.0)
+            .dgain(30.0)
             .zeta(1.0)
             .b(1.0)
             .xi_threshold(Velocity::new::<meter_per_second>(0.2))
@@ -389,7 +389,7 @@ impl Operator {
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
             .v_max(Velocity::new::<meter_per_second>(1.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(5.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
