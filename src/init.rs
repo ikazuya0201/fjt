@@ -28,7 +28,7 @@ use mousecore2::{
         straight::{StraightGenerator, StraightTrajectory},
         ShiftTrajectory, StopTrajectory,
     },
-    wall::{Pose, WallDetector, Walls},
+    wall::{Pose, PoseConverter, WallDetector, Walls},
 };
 use sensors2::{encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180X};
 use spin::{Lazy, Mutex};
@@ -58,6 +58,7 @@ use uom::si::{
     frequency::hertz,
     jerk::meter_per_second_cubed,
     length::{meter, millimeter},
+    ratio::ratio,
     time::second,
     velocity::meter_per_second,
 };
@@ -182,6 +183,9 @@ pub struct Operator {
     estimator: Estimator,
     detector: WallDetector<W>,
     state: State,
+
+    stddev: Length,
+    converter: PoseConverter<W>,
 
     i2c: I2c,
     spi: Spi,
@@ -370,7 +374,7 @@ impl Operator {
         let search_manager = TrajectoryConfig::builder()
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
-            .v_max(Velocity::new::<meter_per_second>(1.0))
+            .v_max(Velocity::new::<meter_per_second>(2.0))
             .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
@@ -400,6 +404,9 @@ impl Operator {
             estimator,
             controller,
             state,
+
+            stddev: Length::default(),
+            converter: PoseConverter::default(),
 
             i2c,
             spi,
@@ -484,6 +491,7 @@ impl Operator {
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
+        self.stddev += Length::new::<millimeter>(0.005);
     }
 
     fn track(&mut self, target: &Target) {
@@ -559,7 +567,23 @@ impl Operator {
                         self.detector
                             .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
                     {
+                        let info = self.converter.convert(&pose).unwrap();
                         walls.update(&coord, &wall_state);
+                        if matches!(
+                            walls.wall_state(&info.coord),
+                            WallState::Checked { exists: true }
+                        ) {
+                            let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
+                            let var = self.stddev * self.stddev;
+                            let k = (var / (var + sensor_var)).get::<ratio>();
+
+                            let distance_diff = k * (info.existing_distance - distance);
+                            let cos_th = pose.theta.value.cos();
+                            let sin_th = pose.theta.value.sin();
+                            self.state.x.x += distance_diff * cos_th;
+                            self.state.y.x += distance_diff * sin_th;
+                            self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
+                        }
                     }
                 }
             };
