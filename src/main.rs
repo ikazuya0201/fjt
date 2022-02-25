@@ -20,6 +20,7 @@ use stm32f4xx_hal::{
     interrupt, stm32,
     timer::{Event, Timer},
 };
+use uom::si::{electric_potential::volt, f32::ElectricPotential};
 
 use init::{tick_on, OPERATOR, SOLVER};
 
@@ -65,6 +66,12 @@ fn main() -> ! {
     // initialization
     Lazy::force(&SOLVER);
     Lazy::force(&OPERATOR);
+
+    {
+        let mut lock = OPERATOR.lock();
+        lock.assert_battery_voltage(ElectricPotential::new::<volt>(3.8));
+        core::mem::drop(lock);
+    }
 
     tick_on();
 
