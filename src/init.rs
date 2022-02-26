@@ -11,7 +11,9 @@ use heapless::{Deque, Vec};
 #[allow(unused_imports)]
 use micromath::F32Ext;
 use mousecore2::{
-    control::{ControlParameters, Controller, Target, Tracker},
+    control::{
+        ControlParameters, Controller, NavigationController, SupervisoryController, Target, Tracker,
+    },
     estimate::{AngleState, Estimator, LengthState, SensorValue, State},
     solve::{
         run::{
@@ -52,7 +54,6 @@ use uom::si::{
     angular_acceleration::degree_per_second_squared,
     angular_jerk::degree_per_second_cubed,
     angular_velocity::degree_per_second,
-    electric_potential::volt,
     f32::{
         Acceleration, Angle, AngularAcceleration, AngularJerk, AngularVelocity, ElectricPotential,
         Frequency, Jerk, Length, Time, Velocity,
@@ -70,7 +71,7 @@ use crate::types::{
 };
 use crate::TIMER_TIM5;
 
-const W: u8 = 16;
+const W: u8 = 32;
 const START_LENGTH: Length = Length {
     value: 0.02,
     units: PhantomData,
@@ -132,6 +133,8 @@ type BackTrajectory = Chain<
 
 type SetupTrajectory = Chain<Chain<StopTrajectory, SpinTrajectory>, StopTrajectory>;
 
+type EmergencyTrajectory = Chain<BackTrajectory, ShiftTrajectory<BackTrajectory>>;
+
 #[derive(Clone)]
 enum Trajectory {
     Straight(StraightTrajectory),
@@ -139,6 +142,7 @@ enum Trajectory {
     Back(BackTrajectory),
     Stop(StopTrajectory),
     Setup(SetupTrajectory),
+    Emergency(EmergencyTrajectory),
 }
 
 struct Linear {
@@ -172,6 +176,7 @@ impl Iterator for Trajectory {
             Back(inner) => inner.next(),
             Stop(inner) => inner.next(),
             Setup(inner) => inner.next(),
+            Emergency(inner) => inner.next(),
         }
     }
 }
@@ -185,6 +190,8 @@ enum Mode {
 
 pub struct Operator {
     tracker: Tracker,
+    navigator: NavigationController,
+    supervisor: SupervisoryController,
     controller: Controller,
     estimator: Estimator,
     detector: WallDetector<W>,
@@ -250,10 +257,6 @@ impl Operator {
             let pa7 = gpioa.pa7.into_analog();
             Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0))
         };
-
-        if voltmeter.voltage() < ElectricPotential::new::<volt>(3.8) {
-            panic!("Low voltage");
-        }
 
         let mut i2c = {
             let scl = gpiob.pb8.into_alternate_af4().set_open_drain();
@@ -359,11 +362,18 @@ impl Operator {
         let state = state;
         let tracker = Tracker::builder()
             .period(period)
-            .gain(120.0)
-            .dgain(30.0)
             .zeta(1.0)
             .b(1.0)
             .xi_threshold(Velocity::new::<meter_per_second>(0.2))
+            .build();
+        let navigator = NavigationController::builder()
+            .gain(120.0)
+            .dgain(30.0)
+            .build();
+        let supervisor = SupervisoryController::builder()
+            .avoidance_distance(Length::new::<millimeter>(25.0))
+            .margin(60.0)
+            .square_width(SQUARE_WIDTH)
             .build();
         let controller = Controller::builder()
             .trans_params(ControlParameters {
@@ -382,14 +392,17 @@ impl Operator {
             })
             .period(period)
             .build();
-        let estimator = Estimator::builder().period(period).build();
+        let estimator = Estimator::builder()
+            .period(period)
+            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(200.0))
+            .build();
         let detector = WallDetector::<W>::default();
 
         let search_manager = TrajectoryConfig::builder()
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.5))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
             .v_max(Velocity::new::<meter_per_second>(1.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(5.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(3.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
@@ -420,6 +433,8 @@ impl Operator {
 
         Operator {
             tracker,
+            navigator,
+            supervisor,
             detector,
             estimator,
             controller,
@@ -484,6 +499,13 @@ impl Operator {
         }
     }
 
+    pub fn assert_battery_voltage(&mut self, lower_bound: ElectricPotential) {
+        assert!(
+            self.voltmeter.voltage() > lower_bound,
+            "Low battery voltage!"
+        );
+    }
+
     pub fn control(&mut self) {
         match self.mode {
             Mode::Search => self.control_search(),
@@ -496,14 +518,14 @@ impl Operator {
         self.estimate();
         self.detect_and_correct();
         let target = self.manager.target().unwrap();
-        self.track(&target);
+        self.track(&target, true);
     }
 
     fn control_return(&mut self) {
         self.estimate();
         self.detect_and_correct();
         if let Some(target) = self.manager.target() {
-            self.track(&target);
+            self.track(&target, true);
         } else {
             use RunPosture::*;
 
@@ -536,12 +558,18 @@ impl Operator {
         self.stddev += Length::new::<millimeter>(0.005);
     }
 
-    fn track(&mut self, target: &Target) {
-        let (control_target, control_state) = self.tracker.track(&self.state, target);
+    fn track(&mut self, target: &Target, is_supervised: bool) {
+        let input = self.navigator.navigate(&self.state, target);
+        let input = if is_supervised {
+            self.supervisor.supervise(&input, &self.state)
+        } else {
+            input
+        };
+        let (control_target, control_state) = self.tracker.track(&self.state, target, &input);
         let vol = self.controller.control(&control_target, &control_state);
 
         const THRES: ElectricPotential = ElectricPotential {
-            value: 7.0,
+            value: 10.0,
             dimension: PhantomData,
             units: PhantomData,
         };
@@ -607,19 +635,23 @@ impl Operator {
         self.estimate();
 
         if let Some(target) = self.manager.target() {
-            self.track(&target);
+            self.track(&target, false);
         } else {
             if !IS_SEARCH_FINISH.load(Ordering::SeqCst) {
-                panic!("solve does not finish on time");
-            }
-
-            if self.manager.set_final(Pose::from_search_state(
+                self.manager.set_emergency(Pose::from_search_state(
+                    STATE.lock().clone(),
+                    SQUARE_WIDTH,
+                    FRONT_OFFSET,
+                ));
+                let target = self.manager.target().unwrap();
+                self.track(&target, false);
+            } else if self.manager.set_final(Pose::from_search_state(
                 STATE.lock().clone(),
                 SQUARE_WIDTH,
                 FRONT_OFFSET,
             )) {
                 let target = self.manager.target().unwrap();
-                self.track(&target);
+                self.track(&target, false);
             } else {
                 self.stop();
                 tick_off();
@@ -820,6 +852,7 @@ struct TrajectoryManager {
     right: Trajectory,
     left: Trajectory,
     back: Trajectory,
+    emergency: Trajectory,
 
     square_width: Length,
     period: Time,
@@ -950,6 +983,12 @@ impl TrajectoryManager {
             .ok();
     }
 
+    fn set_emergency(&mut self, pose: Pose) {
+        self.trajectories
+            .push_back(ShiftTrajectory::new(pose, self.emergency.clone()))
+            .ok();
+    }
+
     fn init_run(&mut self, path: Vec<Node<W>, PATH_MAX>, init_angle: Angle) {
         let init_pose = {
             let mut pose = Pose::from_node(path[0], self.square_width);
@@ -1037,50 +1076,56 @@ impl From<TrajectoryConfig> for TrajectoryManager {
             slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Left),
             search_velocity,
         ));
-        let back = Trajectory::Back(
-            straight
-                .generate(
-                    square_width / 2.0 - front_offset,
-                    search_velocity,
+        let back = straight
+            .generate(
+                square_width / 2.0 - front_offset,
+                search_velocity,
+                Default::default(),
+            )
+            .chain(StopTrajectory::new(
+                Pose {
+                    x: square_width / 2.0 - front_offset,
+                    ..Default::default()
+                },
+                period,
+                Time::new::<second>(0.1),
+            ))
+            .chain(ShiftTrajectory::new(
+                Pose {
+                    x: square_width / 2.0 - front_offset,
+                    ..Default::default()
+                },
+                spin.generate(Angle::new::<degree>(180.0)),
+            ))
+            .chain(StopTrajectory::new(
+                Pose {
+                    x: square_width / 2.0 - front_offset,
+                    y: Default::default(),
+                    theta: Angle::new::<degree>(180.0),
+                },
+                period,
+                Time::new::<second>(0.1),
+            ))
+            .chain(ShiftTrajectory::new(
+                Pose {
+                    x: square_width / 2.0 - front_offset,
+                    y: Default::default(),
+                    theta: Angle::new::<degree>(180.0),
+                },
+                straight.generate(
+                    square_width / 2.0 + front_offset,
                     Default::default(),
-                )
-                .chain(StopTrajectory::new(
-                    Pose {
-                        x: square_width / 2.0 - front_offset,
-                        ..Default::default()
-                    },
-                    period,
-                    Time::new::<second>(0.1),
-                ))
-                .chain(ShiftTrajectory::new(
-                    Pose {
-                        x: square_width / 2.0 - front_offset,
-                        ..Default::default()
-                    },
-                    spin.generate(Angle::new::<degree>(180.0)),
-                ))
-                .chain(StopTrajectory::new(
-                    Pose {
-                        x: square_width / 2.0 - front_offset,
-                        y: Default::default(),
-                        theta: Angle::new::<degree>(180.0),
-                    },
-                    period,
-                    Time::new::<second>(0.1),
-                ))
-                .chain(ShiftTrajectory::new(
-                    Pose {
-                        x: square_width / 2.0 - front_offset,
-                        y: Default::default(),
-                        theta: Angle::new::<degree>(180.0),
-                    },
-                    straight.generate(
-                        square_width / 2.0 + front_offset,
-                        Default::default(),
-                        search_velocity,
-                    ),
-                )),
-        );
+                    search_velocity,
+                ),
+            ));
+        let emergency = back.clone().chain(ShiftTrajectory::new(
+            Pose {
+                x: -2.0 * front_offset,
+                y: Default::default(),
+                theta: Angle::new::<degree>(180.0),
+            },
+            back.clone(),
+        ));
         let mut trajectories = Deque::new();
         trajectories
             .push_back(ShiftTrajectory::new(initial_pose, init))
@@ -1091,7 +1136,8 @@ impl From<TrajectoryConfig> for TrajectoryManager {
             front,
             left,
             right,
-            back,
+            back: Trajectory::Back(back),
+            emergency: Trajectory::Emergency(emergency),
 
             square_width,
             period,
