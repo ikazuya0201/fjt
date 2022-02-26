@@ -37,15 +37,13 @@ use sensors2::{encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180X};
 use spin::{Lazy, Mutex};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
-    delay::Delay,
     dwt::{ClockDuration, Dwt, DwtExt},
     interrupt,
     nb::block,
+    pac,
     prelude::*,
-    pwm::tim1,
     qei::Qei,
-    stm32,
-    timer::{Event, Timer},
+    timer::Event,
 };
 use typed_builder::TypedBuilder;
 use uom::si::{
@@ -67,9 +65,10 @@ use uom::si::{
 };
 
 use crate::types::{
-    I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Spi, Tofs, Voltmeter,
+    ControlTimer, I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Spi, Tofs,
+    Voltmeter,
 };
-use crate::TIMER_TIM5;
+// use crate::TIMER_TIM5;
 
 const W: u8 = 32;
 const START_LENGTH: Length = Length {
@@ -215,6 +214,7 @@ pub struct Operator {
     mode: Mode,
 
     panic_led: PanicLed,
+    control_timer: ControlTimer,
 }
 
 impl fmt::Debug for Operator {
@@ -228,19 +228,19 @@ impl fmt::Debug for Operator {
 impl Operator {
     pub fn new() -> Self {
         let cortex_m_peripherals = cortex_m::Peripherals::take().unwrap();
-        let device_peripherals = stm32::Peripherals::take().unwrap();
+        let device_peripherals = pac::Peripherals::take().unwrap();
 
         let rcc = device_peripherals.RCC.constrain();
 
         let clocks = rcc
             .cfgr
-            .hclk(100_000_000.hz())
-            .sysclk(100_000_000.hz())
-            .pclk1(50_000_000.hz())
-            .pclk2(100_000_000.hz())
+            .hclk(100_000_000.Hz())
+            .sysclk(100_000_000.Hz())
+            .pclk1(50_000_000.Hz())
+            .pclk2(100_000_000.Hz())
             .freeze();
 
-        let mut delay = Delay::new(cortex_m_peripherals.SYST, clocks);
+        let mut delay = cortex_m_peripherals.SYST.delay(&clocks);
 
         let gpioa = device_peripherals.GPIOA.split();
         let gpiob = device_peripherals.GPIOB.split();
@@ -250,7 +250,8 @@ impl Operator {
         let wheel_radius = Length::new::<meter>(0.007);
         let period = Time::new::<second>(0.001);
 
-        let mut timer = Timer::tim5(device_peripherals.TIM5, 1000.hz(), clocks);
+        let mut timer = device_peripherals.TIM5.counter::<1_000_000>(&clocks);
+        timer.start(1.millis()).unwrap();
 
         let voltmeter = {
             let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());
@@ -259,10 +260,10 @@ impl Operator {
         };
 
         let mut i2c = {
-            let scl = gpiob.pb8.into_alternate_af4().set_open_drain();
-            let sda = gpiob.pb9.into_alternate_af4().set_open_drain();
+            let scl = gpiob.pb8.into_alternate().set_open_drain();
+            let sda = gpiob.pb9.into_alternate().set_open_drain();
             let i2c_pins = (scl, sda);
-            I2c::new(device_peripherals.I2C1, i2c_pins, 400.khz(), clocks)
+            I2c::new(device_peripherals.I2C1, i2c_pins, 400.kHz(), &clocks)
         };
 
         let tof_left = {
@@ -282,59 +283,57 @@ impl Operator {
         delay.delay_ms(1000u32);
 
         let right_encoder = {
-            let pins = (
-                gpioa.pa0.into_alternate_af1(),
-                gpioa.pa1.into_alternate_af1(),
-            );
+            let pins = (gpioa.pa0.into_alternate(), gpioa.pa1.into_alternate());
             let qei = Qei::new(device_peripherals.TIM2, pins);
             let encoder = MA702GQ::new(qei, wheel_radius);
             encoder
         };
 
         let left_encoder = {
-            let pins = (
-                gpiob.pb6.into_alternate_af2(),
-                gpiob.pb7.into_alternate_af2(),
-            );
+            let pins = (gpiob.pb6.into_alternate(), gpiob.pb7.into_alternate());
             let qei = Qei::new(device_peripherals.TIM4, pins);
             let encoder = MA702GQ::new(qei, wheel_radius);
             encoder
         };
 
         let spi_pins = (
-            gpiob.pb3.into_alternate_af5(),
-            gpiob.pb4.into_alternate_af5(),
-            gpiob.pb5.into_alternate_af5(),
+            gpiob.pb3.into_alternate(),
+            gpiob.pb4.into_alternate(),
+            gpiob.pb5.into_alternate(),
         );
-        let mut spi = Spi::spi1(
-            device_peripherals.SPI1,
+        let mut spi = device_peripherals.SPI1.spi(
             spi_pins,
             stm32f4xx_hal::hal::spi::MODE_3,
-            1_562_500.hz(),
-            clocks,
+            1_562_500.Hz(),
+            &clocks,
         );
 
         let imu = {
             let mut cs = gpioc.pc15.into_push_pull_output();
-            cs.set_high().unwrap();
+            cs.set_high();
 
             ICM20648::new(&mut spi, cs, &mut delay, &mut timer)
         };
-        spi = spi.init(
+        let (spi, spi_pins) = spi.release();
+        let spi = spi.spi(
+            spi_pins,
             stm32f4xx_hal::hal::spi::MODE_3,
-            6_250_000.hz(),
-            clocks.pclk2(),
+            6_250_000.Hz(),
+            &clocks,
         );
 
         let (left_motor, right_motor) = {
             let (mut pwm1, mut pwm2, mut pwm3, mut pwm4) = {
                 let pins = (
-                    gpioa.pa8.into_alternate_af1(),
-                    gpioa.pa9.into_alternate_af1(),
-                    gpioa.pa10.into_alternate_af1(),
-                    gpioa.pa11.into_alternate_af1(),
+                    gpioa.pa8.into_alternate(),
+                    gpioa.pa9.into_alternate(),
+                    gpioa.pa10.into_alternate(),
+                    gpioa.pa11.into_alternate(),
                 );
-                tim1(device_peripherals.TIM1, pins, clocks, 100.khz())
+                device_peripherals
+                    .TIM1
+                    .pwm_hz(pins, 100.kHz(), &clocks)
+                    .split()
             };
             pwm1.enable();
             pwm2.enable();
@@ -420,15 +419,12 @@ impl Operator {
             .build()
             .into();
 
-        timer.listen(Event::TimeOut);
-        free(|cs| {
-            TIMER_TIM5.borrow(cs).replace(Some(timer));
-        });
+        timer.listen(Event::Update);
 
         *DWT.lock() = Some(
             cortex_m_peripherals
                 .DWT
-                .constrain(cortex_m_peripherals.DCB, clocks),
+                .constrain(cortex_m_peripherals.DCB, &clocks),
         );
 
         Operator {
@@ -496,6 +492,7 @@ impl Operator {
             mode: Mode::Search,
 
             panic_led: gpiob.pb1.into_push_pull_output(),
+            control_timer: timer,
         }
     }
 
@@ -761,7 +758,7 @@ impl Operator {
     }
 
     pub fn turn_on_panic_led(&mut self) {
-        self.panic_led.set_high().unwrap();
+        self.panic_led.set_high();
     }
 
     #[allow(unused)]
@@ -769,6 +766,10 @@ impl Operator {
         DWT.lock().as_mut().unwrap().measure(|| {
             self.control_search();
         })
+    }
+
+    pub fn clear_interrupt(&mut self) {
+        self.control_timer.clear_interrupt(Event::Update);
     }
 }
 
