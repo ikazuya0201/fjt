@@ -8,7 +8,7 @@ use stm32f4xx_hal::{
         gpioh::{PH0, PH1},
         Alternate, Analog, OpenDrain, Output, PushPull,
     },
-    pac::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4, TIM5},
+    pac::{ADC1, I2C1, SPI1, TIM1, TIM2, TIM4, TIM5, TIM7},
     qei::Qei,
     spi::TransferModeNormal,
     timer::{counter::Counter, pwm::PwmChannel},
@@ -50,3 +50,5 @@ pub struct Tofs {
 }
 
 pub type ControlTimer = Counter<TIM5, 1_000_000>;
+
+pub type SensorTimer = Counter<TIM7, 1_000_000>;
