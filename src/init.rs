@@ -6,7 +6,6 @@ use core::{
 };
 
 use cortex_m::interrupt::free;
-use embedded_hal::prelude::*;
 use heapless::{Deque, Vec};
 #[allow(unused_imports)]
 use micromath::F32Ext;
@@ -59,16 +58,14 @@ use uom::si::{
     frequency::hertz,
     jerk::meter_per_second_cubed,
     length::{meter, millimeter},
-    ratio::ratio,
     time::second,
     velocity::meter_per_second,
 };
 
 use crate::types::{
-    ControlTimer, I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor, Spi, Tofs,
-    Voltmeter,
+    ControlTimer, I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor,
+    SensorTimer, Spi, Tofs, Voltmeter,
 };
-// use crate::TIMER_TIM5;
 
 const W: u8 = 32;
 const START_LENGTH: Length = Length {
@@ -83,7 +80,7 @@ const SENSOR_STDDEV: Length = Length {
 };
 const PATH_MAX: usize = 32 * 32;
 
-pub static OPERATOR: Lazy<Mutex<Operator>> = Lazy::new(|| Mutex::new(Operator::new()));
+pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
 pub static SOLVER: Lazy<Mutex<Solver>> = Lazy::new(|| Mutex::new(Solver::new()));
 pub static WALLS: Lazy<Mutex<Walls<W>>> = Lazy::new(|| Mutex::new(Walls::new()));
 static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
@@ -91,7 +88,8 @@ static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
 });
 pub static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
 pub static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
-static DWT: Mutex<Option<Dwt>> = Mutex::new(None);
+static DEBUG_TIMER: Mutex<Option<Dwt>> = Mutex::new(None);
+static TOF_QUEUE: Mutex<Vec<(Length, TofPosition), 3>> = Mutex::new(Vec::new());
 
 const FRONT_OFFSET: Length = Length {
     value: 0.01,
@@ -105,20 +103,30 @@ const SQUARE_WIDTH: Length = Length {
 };
 
 pub fn tick_on() {
+    use cortex_m::peripheral::NVIC;
+    use interrupt::{TIM5, TIM7};
+
     free(|_cs| {
-        cortex_m::peripheral::NVIC::unpend(interrupt::TIM5);
+        NVIC::unpend(TIM5);
+        NVIC::unpend(TIM7);
         unsafe {
             cortex_m::interrupt::enable();
-            cortex_m::peripheral::NVIC::unmask(interrupt::TIM5);
+            NVIC::unmask(TIM5);
+            NVIC::unmask(TIM7);
         }
     });
 }
 
 pub fn tick_off() {
+    use cortex_m::peripheral::NVIC;
+    use interrupt::{TIM5, TIM7};
+
     free(|_cs| {
         cortex_m::interrupt::disable();
-        cortex_m::peripheral::NVIC::mask(interrupt::TIM5);
-        cortex_m::peripheral::NVIC::pend(interrupt::TIM5);
+        NVIC::mask(TIM5);
+        NVIC::pend(TIM5);
+        NVIC::mask(TIM7);
+        NVIC::pend(TIM7);
     });
 }
 
@@ -158,6 +166,12 @@ impl Default for Linear {
     }
 }
 
+enum TofPosition {
+    Front,
+    Right,
+    Left,
+}
+
 struct TofConfigs {
     front: (Pose, Linear),
     right: (Pose, Linear),
@@ -187,50 +201,37 @@ enum Mode {
     Run,
 }
 
-pub struct Operator {
-    tracker: Tracker,
-    navigator: NavigationController,
-    supervisor: SupervisoryController,
-    controller: Controller,
-    estimator: Estimator,
-    detector: WallDetector<W>,
-    state: State,
-
-    stddev: Length,
-    converter: PoseConverter<W>,
-
-    i2c: I2c,
-    spi: Spi,
-    imu: Imu,
-    left_encoder: LeftEncoder,
-    right_encoder: RightEncoder,
-    left_motor: LeftMotor,
-    right_motor: RightMotor,
-    tofs: Tofs,
-    tof_configs: TofConfigs,
-    voltmeter: Voltmeter,
-
-    manager: TrajectoryManager,
-    mode: Mode,
-
-    panic_led: PanicLed,
-    control_timer: ControlTimer,
+pub struct Bag {
+    pub operator: Mutex<Operator>,
+    pub pollar: Mutex<Pollar>,
 }
 
-impl fmt::Debug for Operator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Operator")
-            .field("manager", &self.manager)
-            .finish()
-    }
-}
-
-impl Operator {
+impl Bag {
     pub fn new() -> Self {
-        let cortex_m_peripherals = cortex_m::Peripherals::take().unwrap();
-        let device_peripherals = pac::Peripherals::take().unwrap();
-
-        let rcc = device_peripherals.RCC.constrain();
+        let cortex_m::Peripherals {
+            SYST,
+            DWT,
+            DCB,
+            mut NVIC,
+            ..
+        } = cortex_m::Peripherals::take().unwrap();
+        let pac::Peripherals {
+            RCC,
+            GPIOA,
+            GPIOB,
+            GPIOC,
+            GPIOH,
+            ADC1,
+            I2C1,
+            SPI1,
+            TIM1,
+            TIM2,
+            TIM4,
+            TIM5,
+            TIM7,
+            ..
+        } = pac::Peripherals::take().unwrap();
+        let rcc = RCC.constrain();
 
         let clocks = rcc
             .cfgr
@@ -239,31 +240,20 @@ impl Operator {
             .pclk1(50_000_000.Hz())
             .pclk2(100_000_000.Hz())
             .freeze();
-
-        let mut delay = cortex_m_peripherals.SYST.delay(&clocks);
-
-        let gpioa = device_peripherals.GPIOA.split();
-        let gpiob = device_peripherals.GPIOB.split();
-        let gpioc = device_peripherals.GPIOC.split();
-        let gpioh = device_peripherals.GPIOH.split();
+        let mut delay = SYST.delay(&clocks);
+        let gpioa = GPIOA.split();
+        let gpiob = GPIOB.split();
+        let gpioc = GPIOC.split();
+        let gpioh = GPIOH.split();
 
         let wheel_radius = Length::new::<meter>(0.007);
         let period = Time::new::<second>(0.001);
-
-        let mut timer = device_peripherals.TIM5.counter::<1_000_000>(&clocks);
-        timer.start(1.millis()).unwrap();
-
-        let voltmeter = {
-            let adc = Adc::adc1(device_peripherals.ADC1, true, AdcConfig::default());
-            let pa7 = gpioa.pa7.into_analog();
-            Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0))
-        };
 
         let mut i2c = {
             let scl = gpiob.pb8.into_alternate().set_open_drain();
             let sda = gpiob.pb9.into_alternate().set_open_drain();
             let i2c_pins = (scl, sda);
-            I2c::new(device_peripherals.I2C1, i2c_pins, 400.kHz(), &clocks)
+            I2c::new(I2C1, i2c_pins, 400.kHz(), &clocks)
         };
 
         let tof_left = {
@@ -280,18 +270,26 @@ impl Operator {
         };
 
         while block!(tof_right.distance(&mut i2c)).unwrap() >= START_LENGTH {}
-        delay.delay_ms(1000u32);
+
+        let mut control_timer = TIM5.counter::<1_000_000>(&clocks);
+        control_timer.start(1.millis()).unwrap();
+
+        let voltmeter = {
+            let adc = Adc::adc1(ADC1, true, AdcConfig::default());
+            let pa7 = gpioa.pa7.into_analog();
+            Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0))
+        };
 
         let right_encoder = {
             let pins = (gpioa.pa0.into_alternate(), gpioa.pa1.into_alternate());
-            let qei = Qei::new(device_peripherals.TIM2, pins);
+            let qei = Qei::new(TIM2, pins);
             let encoder = MA702GQ::new(qei, wheel_radius);
             encoder
         };
 
         let left_encoder = {
             let pins = (gpiob.pb6.into_alternate(), gpiob.pb7.into_alternate());
-            let qei = Qei::new(device_peripherals.TIM4, pins);
+            let qei = Qei::new(TIM4, pins);
             let encoder = MA702GQ::new(qei, wheel_radius);
             encoder
         };
@@ -301,7 +299,7 @@ impl Operator {
             gpiob.pb4.into_alternate(),
             gpiob.pb5.into_alternate(),
         );
-        let mut spi = device_peripherals.SPI1.spi(
+        let mut spi = SPI1.spi(
             spi_pins,
             stm32f4xx_hal::hal::spi::MODE_3,
             1_562_500.Hz(),
@@ -312,7 +310,7 @@ impl Operator {
             let mut cs = gpioc.pc15.into_push_pull_output();
             cs.set_high();
 
-            ICM20648::new(&mut spi, cs, &mut delay, &mut timer)
+            ICM20648::new(&mut spi, cs, &mut delay, &mut control_timer)
         };
         let (spi, spi_pins) = spi.release();
         let spi = spi.spi(
@@ -330,10 +328,8 @@ impl Operator {
                     gpioa.pa10.into_alternate(),
                     gpioa.pa11.into_alternate(),
                 );
-                device_peripherals
-                    .TIM1
-                    .pwm_hz(pins, 100.kHz(), &clocks)
-                    .split()
+
+                TIM1.pwm_hz(pins, 100.kHz(), &clocks).split()
             };
             pwm1.enable();
             pwm2.enable();
@@ -393,13 +389,13 @@ impl Operator {
             .build();
         let estimator = Estimator::builder()
             .period(period)
-            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(200.0))
+            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
             .build();
         let detector = WallDetector::<W>::default();
 
         let search_manager = TrajectoryConfig::builder()
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.4))
             .v_max(Velocity::new::<meter_per_second>(1.0))
             .a_max(Acceleration::new::<meter_per_second_squared>(3.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
@@ -419,83 +415,133 @@ impl Operator {
             .build()
             .into();
 
-        timer.listen(Event::Update);
+        *DEBUG_TIMER.lock() = Some(DWT.constrain(DCB, &clocks));
 
-        *DWT.lock() = Some(
-            cortex_m_peripherals
-                .DWT
-                .constrain(cortex_m_peripherals.DCB, &clocks),
-        );
+        let mut sensor_timer = TIM7.counter::<1_000_000>(&clocks);
+        sensor_timer.start(5.millis()).unwrap();
 
-        Operator {
-            tracker,
-            navigator,
-            supervisor,
-            detector,
-            estimator,
-            controller,
-            state,
+        control_timer.listen(Event::Update);
+        sensor_timer.listen(Event::Update);
 
-            stddev: Length::default(),
-            converter: PoseConverter::default(),
+        unsafe {
+            NVIC.set_priority(interrupt::TIM5, 0);
+            NVIC.set_priority(interrupt::TIM7, 1);
+        }
 
-            i2c,
-            spi,
-            imu,
-            voltmeter,
-            left_encoder,
-            right_encoder,
-            left_motor,
-            right_motor,
-            tofs: Tofs {
-                front: tof_front,
-                right: tof_right,
-                left: tof_left,
-            },
-            tof_configs: TofConfigs {
-                left: (
-                    Pose {
-                        x: Length::new::<meter>(0.013),
-                        y: Length::new::<meter>(0.013),
-                        theta: Angle::new::<degree>(90.0),
-                    },
-                    Linear {
-                        slope: 0.983_606_6,
-                        intercept: Length::new::<millimeter>(-4.426_23),
-                    },
-                ),
-                right: (
-                    Pose {
-                        x: Length::new::<meter>(0.013),
-                        y: Length::new::<meter>(-0.013),
-                        theta: Angle::new::<degree>(-90.0),
-                    },
-                    Linear {
-                        slope: 0.833_333_3,
-                        intercept: Length::new::<millimeter>(1.388_889),
-                    },
-                ),
-                front: (
-                    Pose {
-                        x: Length::new::<meter>(0.024),
-                        y: Length::new::<meter>(0.0),
-                        theta: Angle::new::<degree>(0.0),
-                    },
-                    Linear {
-                        slope: 1.086_076,
-                        intercept: Length::new::<millimeter>(-15.344_74),
-                    },
-                ),
-            },
+        Bag {
+            operator: Mutex::new(Operator {
+                tracker,
+                navigator,
+                supervisor,
+                detector,
+                estimator,
+                controller,
+                state,
 
-            manager: search_manager,
-            mode: Mode::Search,
+                stddev: Length::default(),
+                converter: PoseConverter::default(),
 
-            panic_led: gpiob.pb1.into_push_pull_output(),
-            control_timer: timer,
+                spi,
+                imu,
+                voltmeter,
+                left_encoder,
+                right_encoder,
+                left_motor,
+                right_motor,
+                tof_configs: TofConfigs {
+                    left: (
+                        Pose {
+                            x: Length::new::<meter>(0.013),
+                            y: Length::new::<meter>(0.013),
+                            theta: Angle::new::<degree>(90.0),
+                        },
+                        Linear {
+                            slope: 0.983_606_6,
+                            intercept: Length::new::<millimeter>(-4.426_23),
+                        },
+                    ),
+                    right: (
+                        Pose {
+                            x: Length::new::<meter>(0.013),
+                            y: Length::new::<meter>(-0.013),
+                            theta: Angle::new::<degree>(-90.0),
+                        },
+                        Linear {
+                            slope: 0.833_333_3,
+                            intercept: Length::new::<millimeter>(1.388_889),
+                        },
+                    ),
+                    front: (
+                        Pose {
+                            x: Length::new::<meter>(0.024),
+                            y: Length::new::<meter>(0.0),
+                            theta: Angle::new::<degree>(0.0),
+                        },
+                        Linear {
+                            slope: 1.086_076,
+                            intercept: Length::new::<millimeter>(-15.344_74),
+                        },
+                    ),
+                },
+
+                manager: search_manager,
+                mode: Mode::Search,
+
+                panic_led: gpiob.pb1.into_push_pull_output(),
+                control_timer,
+            }),
+            pollar: Mutex::new(Pollar {
+                i2c,
+                tofs: Tofs {
+                    front: tof_front,
+                    right: tof_right,
+                    left: tof_left,
+                },
+                timer: sensor_timer,
+            }),
         }
     }
+}
 
+pub struct Operator {
+    tracker: Tracker,
+    navigator: NavigationController,
+    #[allow(unused)]
+    supervisor: SupervisoryController,
+    controller: Controller,
+    estimator: Estimator,
+    detector: WallDetector<W>,
+    state: State,
+
+    stddev: Length,
+    #[allow(unused)]
+    converter: PoseConverter<W>,
+
+    spi: Spi,
+    imu: Imu,
+    left_encoder: LeftEncoder,
+    right_encoder: RightEncoder,
+    left_motor: LeftMotor,
+    right_motor: RightMotor,
+    tof_configs: TofConfigs,
+    voltmeter: Voltmeter,
+
+    manager: TrajectoryManager,
+    mode: Mode,
+
+    panic_led: PanicLed,
+    control_timer: ControlTimer,
+}
+
+impl fmt::Debug for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Operator")
+            .field("manager", &self.manager)
+            .finish()
+    }
+}
+
+impl Operator {
     pub fn assert_battery_voltage(&mut self, lower_bound: ElectricPotential) {
         assert!(
             self.voltmeter.voltage() > lower_bound,
@@ -515,14 +561,14 @@ impl Operator {
         self.estimate();
         self.detect_and_correct();
         let target = self.manager.target().unwrap();
-        self.track(&target, true);
+        self.track(&target);
     }
 
     fn control_return(&mut self) {
         self.estimate();
         self.detect_and_correct();
         if let Some(target) = self.manager.target() {
-            self.track(&target, true);
+            self.track(&target);
         } else {
             use RunPosture::*;
 
@@ -542,31 +588,32 @@ impl Operator {
         // estimate
         let sensor_value = {
             SensorValue {
-                left_distance: block!(self.left_encoder.distance()).unwrap(),
-                right_distance: block!(self.right_encoder.distance()).unwrap(),
+                left_distance: 1.012 * block!(self.left_encoder.distance()).unwrap(),
+                right_distance: 1.012 * block!(self.right_encoder.distance()).unwrap(),
                 translational_acceleration: block!(self
                     .imu
                     .translational_acceleration(&mut self.spi))
                 .unwrap(),
-                angular_velocity: block!(self.imu.angular_velocity(&mut self.spi)).unwrap(),
+                angular_velocity: 1.0003
+                    * block!(self.imu.angular_velocity(&mut self.spi)).unwrap(),
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
-        self.stddev += Length::new::<millimeter>(0.005);
+        self.stddev += Length::new::<millimeter>(0.002);
     }
 
-    fn track(&mut self, target: &Target, is_supervised: bool) {
+    fn track(&mut self, target: &Target) {
         let input = self.navigator.navigate(&self.state, target);
-        let input = if is_supervised {
-            self.supervisor.supervise(&input, &self.state)
-        } else {
-            input
-        };
+        // let input = if is_supervised {
+        //     self.supervisor.supervise(&input, &self.state)
+        // } else {
+        //     input
+        // };
         let (control_target, control_state) = self.tracker.track(&self.state, target, &input);
         let vol = self.controller.control(&control_target, &control_state);
 
         const THRES: ElectricPotential = ElectricPotential {
-            value: 10.0,
+            value: 7.0,
             dimension: PhantomData,
             units: PhantomData,
         };
@@ -583,56 +630,52 @@ impl Operator {
     fn detect_and_correct(&mut self) {
         let cos_th = self.state.theta.x.value.cos();
         let sin_th = self.state.theta.x.value.sin();
-        macro_rules! detect {
-            ($pos: ident) => {
-                if let Ok(distance) = self.tofs.$pos.distance(&mut self.i2c) {
-                    let distance = self.tof_configs.$pos.1.slope * distance
-                        + self.tof_configs.$pos.1.intercept;
-                    let pose = Pose {
-                        x: self.state.x.x + self.tof_configs.$pos.0.x * cos_th
-                            - self.tof_configs.$pos.0.y * sin_th,
-                        y: self.state.y.x
-                            + self.tof_configs.$pos.0.x * sin_th
-                            + self.tof_configs.$pos.0.y * cos_th,
-                        theta: self.state.theta.x + self.tof_configs.$pos.0.theta,
-                    };
+        if let Some(mut que) = TOF_QUEUE.try_lock() {
+            while let Some((distance, pos)) = que.pop() {
+                let config = match pos {
+                    TofPosition::Front => &self.tof_configs.front,
+                    TofPosition::Right => &self.tof_configs.right,
+                    TofPosition::Left => &self.tof_configs.left,
+                };
+                let distance = config.1.slope * distance + config.1.intercept;
+                let pose = Pose {
+                    x: self.state.x.x + config.0.x * cos_th - config.0.y * sin_th,
+                    y: self.state.y.x + config.0.x * sin_th + config.0.y * cos_th,
+                    theta: self.state.theta.x + config.0.theta,
+                };
 
-                    let mut walls = WALLS.lock();
-                    if let Some((coord, wall_state)) =
-                        self.detector
-                            .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
-                    {
-                        let info = self.converter.convert(&pose).unwrap();
-                        walls.update(&coord, &wall_state);
-                        if matches!(
-                            walls.wall_state(&info.coord),
-                            WallState::Checked { exists: true }
-                        ) {
-                            let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
-                            let var = self.stddev * self.stddev;
-                            let k = (var / (var + sensor_var)).get::<ratio>();
+                let mut walls = WALLS.lock();
+                if let Some((coord, wall_state)) =
+                    self.detector
+                        .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
+                {
+                    walls.update(&coord, &wall_state);
+                    // let info = self.converter.convert(&pose).unwrap();
+                    // if matches!(
+                    //     walls.wall_state(&info.coord),
+                    //     WallState::Checked { exists: true }
+                    // ) {
+                    //     let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
+                    //     let var = self.stddev * self.stddev;
+                    //     let k = (var / (var + sensor_var)).get::<ratio>();
 
-                            let distance_diff = k * (info.existing_distance - distance);
-                            let cos_th = pose.theta.value.cos();
-                            let sin_th = pose.theta.value.sin();
-                            self.state.x.x += distance_diff * cos_th;
-                            self.state.y.x += distance_diff * sin_th;
-                            self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
-                        }
-                    }
+                    //     let distance_diff = k * (info.existing_distance - distance);
+                    //     let cos_th = pose.theta.value.cos();
+                    //     let sin_th = pose.theta.value.sin();
+                    //     self.state.x.x += distance_diff * cos_th;
+                    //     self.state.y.x += distance_diff * sin_th;
+                    //     self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
+                    // }
                 }
-            };
+            }
         }
-        detect!(front);
-        detect!(right);
-        detect!(left);
     }
 
     fn control_search(&mut self) {
         self.estimate();
 
         if let Some(target) = self.manager.target() {
-            self.track(&target, false);
+            self.track(&target);
         } else {
             if !IS_SEARCH_FINISH.load(Ordering::SeqCst) {
                 self.manager.set_emergency(Pose::from_search_state(
@@ -641,14 +684,14 @@ impl Operator {
                     FRONT_OFFSET,
                 ));
                 let target = self.manager.target().unwrap();
-                self.track(&target, false);
+                self.track(&target);
             } else if self.manager.set_final(Pose::from_search_state(
                 STATE.lock().clone(),
                 SQUARE_WIDTH,
                 FRONT_OFFSET,
             )) {
                 let target = self.manager.target().unwrap();
-                self.track(&target, false);
+                self.track(&target);
             } else {
                 self.stop();
                 tick_off();
@@ -763,13 +806,38 @@ impl Operator {
 
     #[allow(unused)]
     pub fn measure(&mut self) -> ClockDuration {
-        DWT.lock().as_mut().unwrap().measure(|| {
+        DEBUG_TIMER.lock().as_mut().unwrap().measure(|| {
             self.control_search();
         })
     }
 
     pub fn clear_interrupt(&mut self) {
         self.control_timer.clear_interrupt(Event::Update);
+    }
+}
+
+pub struct Pollar {
+    i2c: I2c,
+    tofs: Tofs,
+    timer: SensorTimer,
+}
+
+impl Pollar {
+    pub fn poll(&mut self) {
+        macro_rules! poll {
+            ($field: ident, $pos: expr) => {
+                if let Ok(distance) = self.tofs.$field.distance(&mut self.i2c) {
+                    TOF_QUEUE.lock().push((distance, $pos)).ok();
+                }
+            };
+        }
+        poll!(front, TofPosition::Front);
+        poll!(right, TofPosition::Right);
+        poll!(left, TofPosition::Left);
+    }
+
+    pub fn clear_interrupt(&mut self) {
+        self.timer.clear_interrupt(Event::Update);
     }
 }
 
