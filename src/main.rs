@@ -6,25 +6,20 @@ mod init;
 mod types;
 
 // use core::alloc::Layout;
-use core::cell::RefCell;
 use core::fmt::Write;
-use core::ops::DerefMut;
 use core::panic::PanicInfo;
 
 // use alloc_cortex_m::CortexMHeap;
-use cortex_m::interrupt::{free, Mutex};
+use cortex_m::interrupt::free;
 use cortex_m_rt::entry;
 use jlink_rtt::Output;
 use spin::Lazy;
-use stm32f4xx_hal::{
-    interrupt, stm32,
-    timer::{Event, Timer},
-};
+use stm32f4xx_hal::interrupt;
 use uom::si::{electric_potential::volt, f32::ElectricPotential};
 
 use init::{tick_on, OPERATOR, SOLVER};
 
-static TIMER_TIM5: Mutex<RefCell<Option<Timer<stm32::TIM5>>>> = Mutex::new(RefCell::new(None));
+// static TIMER_TIM5: Mutex<RefCell<Option<Timer<pac::TIM5>>>> = Mutex::new(RefCell::new(None));
 
 // #[global_allocator]
 // static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
@@ -49,11 +44,10 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[interrupt]
 fn TIM5() {
-    free(|cs| {
-        if let Some(ref mut tim5) = TIMER_TIM5.borrow(cs).borrow_mut().deref_mut() {
-            tim5.clear_interrupt(Event::TimeOut);
-        }
-        OPERATOR.lock().control();
+    free(|_| {
+        let mut operator = OPERATOR.lock();
+        operator.control();
+        operator.clear_interrupt();
     });
 }
 
@@ -74,6 +68,8 @@ fn main() -> ! {
     }
 
     tick_on();
+    let mut out = Output::new();
+    writeln!(out, "hey!").ok();
 
     loop {
         SOLVER.lock().search();
