@@ -1,12 +1,14 @@
+mod trajectory;
+mod types;
+
 use core::{
     fmt,
-    iter::Chain,
     marker::PhantomData,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use cortex_m::interrupt::free;
-use heapless::{Deque, Vec};
+use heapless::Vec;
 #[allow(unused_imports)]
 use micromath::F32Ext;
 use mousecore2::{
@@ -15,20 +17,10 @@ use mousecore2::{
     },
     estimate::{AngleState, Estimator, LengthState, SensorValue, State},
     solve::{
-        run::{
-            shortest_path, EdgeKind, Node, Posture as RunPosture,
-            TrajectoryKind as RunTrajectoryKind,
-        },
+        run::{shortest_path, EdgeKind, Node, Posture as RunPosture},
         search::{
-            Commander, Coordinate, Posture as SearchPosture, SearchState, Searcher,
-            TrajectoryKind as SearchTrajectoryKind, WallState,
+            Commander, Coordinate, Posture as SearchPosture, SearchState, Searcher, WallState,
         },
-    },
-    trajectory::{
-        slalom::{SlalomConfig, SlalomDirection, SlalomGenerator, SlalomKind, SlalomTrajectory},
-        spin::{SpinGenerator, SpinTrajectory},
-        straight::{StraightGenerator, StraightTrajectory},
-        ShiftTrajectory, StopTrajectory,
     },
     wall::{Pose, PoseConverter, WallDetector, Walls},
 };
@@ -42,9 +34,8 @@ use stm32f4xx_hal::{
     pac,
     prelude::*,
     qei::Qei,
-    timer::Event,
+    timer::{Event, SysDelay},
 };
-use typed_builder::TypedBuilder;
 use uom::si::{
     acceleration::meter_per_second_squared,
     angle::degree,
@@ -62,7 +53,8 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use crate::types::{
+use trajectory::{TrajectoryConfig, TrajectoryManager};
+use types::{
     ControlTimer, I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor,
     SensorTimer, Spi, Tofs, Voltmeter,
 };
@@ -130,28 +122,6 @@ pub fn tick_off() {
     });
 }
 
-type BackTrajectory = Chain<
-    Chain<
-        Chain<Chain<StraightTrajectory, StopTrajectory>, ShiftTrajectory<SpinTrajectory>>,
-        StopTrajectory,
-    >,
-    ShiftTrajectory<StraightTrajectory>,
->;
-
-type SetupTrajectory = Chain<Chain<StopTrajectory, SpinTrajectory>, StopTrajectory>;
-
-type EmergencyTrajectory = Chain<BackTrajectory, ShiftTrajectory<BackTrajectory>>;
-
-#[derive(Clone)]
-enum Trajectory {
-    Straight(StraightTrajectory),
-    Slalom(SlalomTrajectory),
-    Back(BackTrajectory),
-    Stop(StopTrajectory),
-    Setup(SetupTrajectory),
-    Emergency(EmergencyTrajectory),
-}
-
 struct Linear {
     slope: f32,
     intercept: Length,
@@ -166,6 +136,7 @@ impl Default for Linear {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum TofPosition {
     Front,
     Right,
@@ -178,24 +149,9 @@ struct TofConfigs {
     left: (Pose, Linear),
 }
 
-impl Iterator for Trajectory {
-    type Item = Target;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use Trajectory::*;
-        match self {
-            Straight(inner) => inner.next(),
-            Slalom(inner) => inner.next(),
-            Back(inner) => inner.next(),
-            Stop(inner) => inner.next(),
-            Setup(inner) => inner.next(),
-            Emergency(inner) => inner.next(),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 enum Mode {
+    Idle,
     Search,
     Return,
     Run,
@@ -260,7 +216,7 @@ impl Bag {
             let enable_pin = gpioh.ph1.into_push_pull_output();
             VL6180X::new(&mut i2c, enable_pin, &mut delay, 0x31)
         };
-        let mut tof_right = {
+        let tof_right = {
             let enable_pin = gpioa.pa15.into_push_pull_output();
             VL6180X::new(&mut i2c, enable_pin, &mut delay, 0x30)
         };
@@ -269,15 +225,13 @@ impl Bag {
             VL6180X::new(&mut i2c, enable_pin, &mut delay, 0x29)
         };
 
-        while block!(tof_right.distance(&mut i2c)).unwrap() >= START_LENGTH {}
-
         let mut control_timer = TIM5.counter::<1_000_000>(&clocks);
         control_timer.start(1.millis()).unwrap();
 
         let voltmeter = {
             let adc = Adc::adc1(ADC1, true, AdcConfig::default());
             let pa7 = gpioa.pa7.into_analog();
-            Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0))
+            Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0), 1.86)
         };
 
         let right_encoder = {
@@ -389,16 +343,16 @@ impl Bag {
             .build();
         let estimator = Estimator::builder()
             .period(period)
-            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(100.0))
+            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(35.0))
             .build();
         let detector = WallDetector::<W>::default();
 
         let search_manager = TrajectoryConfig::builder()
-            .search_velocity(Velocity::new::<meter_per_second>(0.3))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.4))
+            .search_velocity(Velocity::new::<meter_per_second>(0.15))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.15))
             .v_max(Velocity::new::<meter_per_second>(1.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(3.0))
-            .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(1.0))
+            .j_max(Jerk::new::<meter_per_second_cubed>(20.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
                 14400.0,
@@ -485,10 +439,11 @@ impl Bag {
                 },
 
                 manager: search_manager,
-                mode: Mode::Search,
+                mode: Mode::Idle,
 
                 panic_led: gpiob.pb1.into_push_pull_output(),
                 control_timer,
+                delay,
             }),
             pollar: Mutex::new(Pollar {
                 i2c,
@@ -531,6 +486,7 @@ pub struct Operator {
 
     panic_led: PanicLed,
     control_timer: ControlTimer,
+    delay: SysDelay,
 }
 
 impl fmt::Debug for Operator {
@@ -542,18 +498,30 @@ impl fmt::Debug for Operator {
 }
 
 impl Operator {
-    pub fn assert_battery_voltage(&mut self, lower_bound: ElectricPotential) {
-        assert!(
-            self.voltmeter.voltage() > lower_bound,
-            "Low battery voltage!"
-        );
+    pub fn battery_voltage(&mut self) -> ElectricPotential {
+        self.voltmeter.voltage()
     }
 
     pub fn control(&mut self) {
         match self.mode {
+            Mode::Idle => self.control_idle(),
             Mode::Search => self.control_search(),
             Mode::Return => self.control_return(),
             Mode::Run => self.control_run(),
+        }
+    }
+
+    fn control_idle(&mut self) {
+        if let Some(mut que) = TOF_QUEUE.try_lock() {
+            while let Some((distance, pos)) = que.pop() {
+                if pos == TofPosition::Right && distance < START_LENGTH {
+                    tick_off();
+                    self.mode = Mode::Search;
+                    self.imu
+                        .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
+                    tick_on();
+                }
+            }
         }
     }
 
@@ -588,27 +556,22 @@ impl Operator {
         // estimate
         let sensor_value = {
             SensorValue {
-                left_distance: 1.012 * block!(self.left_encoder.distance()).unwrap(),
-                right_distance: 1.012 * block!(self.right_encoder.distance()).unwrap(),
+                left_distance: 1.02 * block!(self.left_encoder.distance()).unwrap(),
+                right_distance: 1.02 * block!(self.right_encoder.distance()).unwrap(),
                 translational_acceleration: block!(self
                     .imu
                     .translational_acceleration(&mut self.spi))
                 .unwrap(),
-                angular_velocity: 1.0003
-                    * block!(self.imu.angular_velocity(&mut self.spi)).unwrap(),
+                angular_velocity: 1.003 * block!(self.imu.angular_velocity(&mut self.spi)).unwrap(),
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
-        self.stddev += Length::new::<millimeter>(0.002);
+        self.stddev += Length::new::<millimeter>(0.005);
     }
 
     fn track(&mut self, target: &Target) {
         let input = self.navigator.navigate(&self.state, target);
-        // let input = if is_supervised {
-        //     self.supervisor.supervise(&input, &self.state)
-        // } else {
-        //     input
-        // };
+        // let input = self.supervisor.supervise(&input, &self.state);
         let (control_target, control_state) = self.tracker.track(&self.state, target, &input);
         let vol = self.controller.control(&control_target, &control_state);
 
@@ -623,8 +586,10 @@ impl Operator {
             panic!("fail safe!");
         }
 
-        self.left_motor.apply(vol.left, self.voltmeter.voltage());
-        self.right_motor.apply(vol.right, self.voltmeter.voltage());
+        // let voltage = ElectricPotential::new::<volt>(3.9);
+        let voltage = self.voltmeter.voltage();
+        self.left_motor.apply(vol.left, voltage);
+        self.right_motor.apply(vol.right, voltage);
     }
 
     fn detect_and_correct(&mut self) {
@@ -650,22 +615,22 @@ impl Operator {
                         .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
                 {
                     walls.update(&coord, &wall_state);
-                    // let info = self.converter.convert(&pose).unwrap();
-                    // if matches!(
-                    //     walls.wall_state(&info.coord),
-                    //     WallState::Checked { exists: true }
-                    // ) {
-                    //     let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
-                    //     let var = self.stddev * self.stddev;
-                    //     let k = (var / (var + sensor_var)).get::<ratio>();
+                    let info = self.converter.convert(&pose).unwrap();
+                    if matches!(
+                        walls.wall_state(&info.coord),
+                        WallState::Checked { exists: true }
+                    ) {
+                        let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
+                        let var = self.stddev * self.stddev;
+                        let k = (var / (var + sensor_var)).get::<uom::si::ratio::ratio>();
 
-                    //     let distance_diff = k * (info.existing_distance - distance);
-                    //     let cos_th = pose.theta.value.cos();
-                    //     let sin_th = pose.theta.value.sin();
-                    //     self.state.x.x += distance_diff * cos_th;
-                    //     self.state.y.x += distance_diff * sin_th;
-                    //     self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
-                    // }
+                        let distance_diff = k * (info.existing_distance - distance);
+                        let cos_th = pose.theta.value.cos();
+                        let sin_th = pose.theta.value.sin();
+                        self.state.x.x += distance_diff * cos_th;
+                        self.state.y.x += distance_diff * sin_th;
+                        self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
+                    }
                 }
             }
         }
@@ -894,333 +859,6 @@ impl Solver {
                 IS_SEARCH_FINISH.store(true, Ordering::SeqCst);
             }
             Err(err) => unreachable!("{:?}", err),
-        }
-    }
-}
-
-#[derive(TypedBuilder)]
-struct TrajectoryConfig {
-    square_width: Length,
-    front_offset: Length,
-    v_max: Velocity,
-    a_max: Acceleration,
-    j_max: Jerk,
-    spin_v_max: AngularVelocity,
-    spin_a_max: AngularAcceleration,
-    spin_j_max: AngularJerk,
-    search_velocity: Velocity,
-    period: Time,
-    initial_pose: Pose,
-    run_slalom_velocity: Velocity,
-}
-
-struct TrajectoryManager {
-    trajectories: Deque<ShiftTrajectory<Trajectory>, 3>,
-    fin: Option<Trajectory>,
-    front: Trajectory,
-    right: Trajectory,
-    left: Trajectory,
-    back: Trajectory,
-    emergency: Trajectory,
-
-    square_width: Length,
-    period: Time,
-    run_slalom_velocity: Velocity,
-
-    straight: StraightGenerator,
-    spin: SpinGenerator,
-    slalom: SlalomGenerator,
-    slalom_config: SlalomConfig,
-
-    run_iter: usize,
-    cur_velocity: Velocity,
-    is_run: bool,
-    path: Vec<Node<W>, PATH_MAX>,
-}
-
-impl fmt::Debug for TrajectoryManager {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TrajectoryManager")
-            .field("fin_is_none", &self.fin.is_none())
-            .finish()
-    }
-}
-
-impl TrajectoryManager {
-    fn target(&mut self) -> Option<Target> {
-        if self.is_run && !self.trajectories.is_full() && self.run_iter < self.path.len() - 1 {
-            use RunTrajectoryKind::*;
-            let i = self.run_iter;
-            let velocity = self.cur_velocity;
-
-            let pose = Pose::from_node(self.path[i], self.square_width);
-            let kind = self.path[i]
-                .trajectory_kind(&self.path[i + 1])
-                .unwrap_or_else(|| unreachable!("{:?}", (self.path[i], self.path[i + 1])));
-            let (start, middle, end) = if i <= 1 {
-                (velocity, self.run_slalom_velocity, self.run_slalom_velocity)
-            } else if i + 2 == self.path.len() {
-                (velocity, velocity * 0.666_666_7, Default::default())
-            } else if i + 3 == self.path.len() {
-                (velocity, velocity * 0.5, velocity * 0.5)
-            } else {
-                (
-                    self.run_slalom_velocity,
-                    self.run_slalom_velocity,
-                    self.run_slalom_velocity,
-                )
-            };
-            let (trajectory, terminal_velocity) = match kind {
-                Straight(x) => {
-                    let (trajectory, terminal_velocity) = self
-                        .straight
-                        .generate_with_terminal_velocity(x as f32 * self.square_width, start, end);
-                    (
-                        ShiftTrajectory::new(pose, Trajectory::Straight(trajectory)),
-                        terminal_velocity,
-                    )
-                }
-                StraightDiagonal(x) => {
-                    let (trajectory, terminal_velocity) =
-                        self.straight.generate_with_terminal_velocity(
-                            x as f32 * self.square_width / 2.0f32.sqrt(),
-                            start,
-                            end,
-                        );
-                    (
-                        ShiftTrajectory::new(pose, Trajectory::Straight(trajectory)),
-                        terminal_velocity,
-                    )
-                }
-                Slalom(kind, dir) => {
-                    let (trajectory, terminal_velocity) =
-                        self.slalom.generate_slalom_with_terminal_velocity(
-                            self.slalom_config.parameters(kind, dir),
-                            start,
-                            middle,
-                            end,
-                        );
-                    (
-                        ShiftTrajectory::new(pose, Trajectory::Slalom(trajectory)),
-                        terminal_velocity,
-                    )
-                }
-            };
-            self.cur_velocity = terminal_velocity;
-            self.trajectories.push_back(trajectory).ok();
-            self.run_iter += 1;
-        }
-
-        let front = self.trajectories.front_mut()?;
-        if let Some(target) = front.next() {
-            Some(target)
-        } else {
-            core::mem::drop(front);
-            self.trajectories.pop_front();
-            self.trajectories.front_mut()?.next()
-        }
-    }
-
-    fn set_final(&mut self, pose: Pose) -> bool {
-        if let Some(fin) = self.fin.take() {
-            self.trajectories
-                .push_back(ShiftTrajectory::new(pose, fin))
-                .ok();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn is_full(&self) -> bool {
-        self.trajectories.is_full()
-    }
-
-    fn set(&mut self, pose: Pose, kind: SearchTrajectoryKind) {
-        use SearchTrajectoryKind::*;
-
-        self.trajectories
-            .push_back(ShiftTrajectory::new(
-                pose,
-                match kind {
-                    Front => self.front.clone(),
-                    Right => self.right.clone(),
-                    Left => self.left.clone(),
-                    Back => self.back.clone(),
-                },
-            ))
-            .ok();
-    }
-
-    fn set_emergency(&mut self, pose: Pose) {
-        self.trajectories
-            .push_back(ShiftTrajectory::new(pose, self.emergency.clone()))
-            .ok();
-    }
-
-    fn init_run(&mut self, path: Vec<Node<W>, PATH_MAX>, init_angle: Angle) {
-        let init_pose = {
-            let mut pose = Pose::from_node(path[0], self.square_width);
-            pose.theta -= init_angle;
-            pose
-        };
-        self.trajectories
-            .push_back(ShiftTrajectory::new(
-                init_pose,
-                if init_angle == Angle::default() {
-                    Trajectory::Stop(StopTrajectory::new(
-                        Default::default(),
-                        self.period,
-                        Time::new::<second>(0.5),
-                    ))
-                } else {
-                    Trajectory::Setup(
-                        StopTrajectory::new(
-                            Default::default(),
-                            self.period,
-                            Time::new::<second>(0.5),
-                        )
-                        .chain(self.spin.generate(init_angle))
-                        .chain(StopTrajectory::new(
-                            Pose {
-                                theta: init_angle,
-                                ..Default::default()
-                            },
-                            self.period,
-                            Time::new::<second>(0.5),
-                        )),
-                    )
-                },
-            ))
-            .ok();
-        self.run_iter = 0;
-        self.path = path;
-        self.is_run = true;
-        self.cur_velocity = Default::default();
-    }
-}
-
-impl From<TrajectoryConfig> for TrajectoryManager {
-    fn from(
-        TrajectoryConfig {
-            square_width,
-            front_offset,
-            v_max,
-            a_max,
-            j_max,
-            spin_v_max,
-            spin_a_max,
-            spin_j_max,
-            search_velocity,
-            period,
-            initial_pose,
-            run_slalom_velocity,
-        }: TrajectoryConfig,
-    ) -> Self {
-        let slalom_config = SlalomConfig::new(square_width, front_offset);
-        let slalom = SlalomGenerator::new(period, v_max, a_max, j_max);
-        let spin = SpinGenerator::new(spin_v_max, spin_a_max, spin_j_max, period);
-        let straight = StraightGenerator::new(v_max, a_max, j_max, period);
-
-        let init = Trajectory::Straight(straight.generate(
-            square_width / 2.0 + front_offset,
-            Default::default(),
-            search_velocity,
-        ));
-        let fin = Trajectory::Straight(straight.generate(
-            square_width / 2.0 - front_offset,
-            search_velocity,
-            Default::default(),
-        ));
-        let front = Trajectory::Straight(StraightGenerator::generate_constant(
-            square_width,
-            search_velocity,
-            period,
-        ));
-        let right = Trajectory::Slalom(slalom.generate_constant_slalom(
-            slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Right),
-            search_velocity,
-        ));
-        let left = Trajectory::Slalom(slalom.generate_constant_slalom(
-            slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Left),
-            search_velocity,
-        ));
-        let back = straight
-            .generate(
-                square_width / 2.0 - front_offset,
-                search_velocity,
-                Default::default(),
-            )
-            .chain(StopTrajectory::new(
-                Pose {
-                    x: square_width / 2.0 - front_offset,
-                    ..Default::default()
-                },
-                period,
-                Time::new::<second>(0.1),
-            ))
-            .chain(ShiftTrajectory::new(
-                Pose {
-                    x: square_width / 2.0 - front_offset,
-                    ..Default::default()
-                },
-                spin.generate(Angle::new::<degree>(180.0)),
-            ))
-            .chain(StopTrajectory::new(
-                Pose {
-                    x: square_width / 2.0 - front_offset,
-                    y: Default::default(),
-                    theta: Angle::new::<degree>(180.0),
-                },
-                period,
-                Time::new::<second>(0.1),
-            ))
-            .chain(ShiftTrajectory::new(
-                Pose {
-                    x: square_width / 2.0 - front_offset,
-                    y: Default::default(),
-                    theta: Angle::new::<degree>(180.0),
-                },
-                straight.generate(
-                    square_width / 2.0 + front_offset,
-                    Default::default(),
-                    search_velocity,
-                ),
-            ));
-        let emergency = back.clone().chain(ShiftTrajectory::new(
-            Pose {
-                x: -2.0 * front_offset,
-                y: Default::default(),
-                theta: Angle::new::<degree>(180.0),
-            },
-            back.clone(),
-        ));
-        let mut trajectories = Deque::new();
-        trajectories
-            .push_back(ShiftTrajectory::new(initial_pose, init))
-            .ok();
-        Self {
-            trajectories,
-            fin: Some(fin),
-            front,
-            left,
-            right,
-            back: Trajectory::Back(back),
-            emergency: Trajectory::Emergency(emergency),
-
-            square_width,
-            period,
-            run_slalom_velocity,
-
-            straight,
-            spin,
-            slalom,
-            slalom_config,
-
-            run_iter: 0,
-            path: Vec::new(),
-            cur_velocity: Default::default(),
-            is_run: false,
         }
     }
 }
