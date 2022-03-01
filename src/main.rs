@@ -16,7 +16,7 @@ use spin::Lazy;
 use stm32f4xx_hal::interrupt;
 use uom::si::{electric_potential::volt, f32::ElectricPotential};
 
-use init::{tick_on, BAG, SOLVER};
+use init::{tick_on, BAG};
 
 // static TIMER_TIM5: Mutex<RefCell<Option<Timer<pac::TIM5>>>> = Mutex::new(RefCell::new(None));
 
@@ -29,15 +29,15 @@ fn panic(info: &PanicInfo) -> ! {
     writeln!(out, "{:?}", info).ok();
     unsafe {
         BAG.operator.force_unlock();
-        init::COMMANDER.force_unlock();
-        init::WALLS.force_unlock();
+        BAG.commander.force_unlock();
+        BAG.walls.force_unlock();
     }
     let mut operator = BAG.operator.lock();
     operator.stop();
     operator.turn_on_panic_led();
     writeln!(out, "{:?}", operator).ok();
-    writeln!(out, "{:?}", init::COMMANDER.lock()).ok();
-    writeln!(out, "{}", init::WALLS.lock()).ok();
+    writeln!(out, "{:?}", BAG.commander.lock()).ok();
+    writeln!(out, "{}", BAG.walls.lock()).ok();
     loop {}
 }
 
@@ -64,7 +64,6 @@ fn main() -> ! {
     // unsafe { ALLOCATOR.init(start, size) }
 
     // initialization
-    Lazy::force(&SOLVER);
     Lazy::force(&BAG);
 
     let mut out = Output::new();
@@ -83,7 +82,7 @@ fn main() -> ! {
     tick_on();
 
     loop {
-        SOLVER.lock().search();
+        BAG.solver.lock().search();
     }
 }
 
