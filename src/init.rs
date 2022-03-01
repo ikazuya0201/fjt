@@ -28,7 +28,6 @@ use sensors2::{encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180X};
 use spin::{Lazy, Mutex};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
-    dwt::{ClockDuration, Dwt, DwtExt},
     interrupt,
     nb::block,
     pac,
@@ -73,15 +72,6 @@ const SENSOR_STDDEV: Length = Length {
 const PATH_MAX: usize = 32 * 32;
 
 pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
-pub static SOLVER: Lazy<Mutex<Solver>> = Lazy::new(|| Mutex::new(Solver::new()));
-pub static WALLS: Lazy<Mutex<Walls<W>>> = Lazy::new(|| Mutex::new(Walls::new()));
-static STATE: Lazy<Mutex<SearchState<W>>> = Lazy::new(|| {
-    Mutex::new(SearchState::new(Coordinate::new(0, 1).unwrap(), SearchPosture::North).unwrap())
-});
-pub static COMMANDER: Mutex<Option<Commander<W>>> = Mutex::new(None);
-pub static IS_SEARCH_FINISH: AtomicBool = AtomicBool::new(false);
-static DEBUG_TIMER: Mutex<Option<Dwt>> = Mutex::new(None);
-static TOF_QUEUE: Mutex<Vec<(Length, TofPosition), 3>> = Mutex::new(Vec::new());
 
 const FRONT_OFFSET: Length = Length {
     value: 0.01,
@@ -160,17 +150,17 @@ enum Mode {
 pub struct Bag {
     pub operator: Mutex<Operator>,
     pub pollar: Mutex<Pollar>,
+    pub solver: Mutex<Solver>,
+    pub walls: Mutex<Walls<W>>,
+    state: Mutex<SearchState<W>>,
+    pub commander: Mutex<Option<Commander<W>>>,
+    is_search_finish: AtomicBool,
+    tof_queue: Mutex<Vec<(Length, TofPosition), 3>>,
 }
 
 impl Bag {
     pub fn new() -> Self {
-        let cortex_m::Peripherals {
-            SYST,
-            DWT,
-            DCB,
-            mut NVIC,
-            ..
-        } = cortex_m::Peripherals::take().unwrap();
+        let cortex_m::Peripherals { SYST, mut NVIC, .. } = cortex_m::Peripherals::take().unwrap();
         let pac::Peripherals {
             RCC,
             GPIOA,
@@ -369,8 +359,6 @@ impl Bag {
             .build()
             .into();
 
-        *DEBUG_TIMER.lock() = Some(DWT.constrain(DCB, &clocks));
-
         let mut sensor_timer = TIM7.counter::<1_000_000>(&clocks);
         sensor_timer.start(5.millis()).unwrap();
 
@@ -454,6 +442,14 @@ impl Bag {
                 },
                 timer: sensor_timer,
             }),
+            solver: Mutex::new(Solver::new()),
+            walls: Mutex::new(Walls::new()),
+            state: Mutex::new(
+                SearchState::new(Coordinate::new(0, 1).unwrap(), SearchPosture::North).unwrap(),
+            ),
+            commander: Mutex::new(None),
+            is_search_finish: AtomicBool::new(false),
+            tof_queue: Mutex::new(Vec::new()),
         }
     }
 }
@@ -512,7 +508,7 @@ impl Operator {
     }
 
     fn control_idle(&mut self) {
-        if let Some(mut que) = TOF_QUEUE.try_lock() {
+        if let Some(mut que) = BAG.tof_queue.try_lock() {
             while let Some((distance, pos)) = que.pop() {
                 if pos == TofPosition::Right && distance < START_LENGTH {
                     tick_off();
@@ -595,7 +591,7 @@ impl Operator {
     fn detect_and_correct(&mut self) {
         let cos_th = self.state.theta.x.value.cos();
         let sin_th = self.state.theta.x.value.sin();
-        if let Some(mut que) = TOF_QUEUE.try_lock() {
+        if let Some(mut que) = BAG.tof_queue.try_lock() {
             while let Some((distance, pos)) = que.pop() {
                 let config = match pos {
                     TofPosition::Front => &self.tof_configs.front,
@@ -609,7 +605,7 @@ impl Operator {
                     theta: self.state.theta.x + config.0.theta,
                 };
 
-                let mut walls = WALLS.lock();
+                let mut walls = BAG.walls.lock();
                 if let Some((coord, wall_state)) =
                     self.detector
                         .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
@@ -642,16 +638,16 @@ impl Operator {
         if let Some(target) = self.manager.target() {
             self.track(&target);
         } else {
-            if !IS_SEARCH_FINISH.load(Ordering::SeqCst) {
+            if !BAG.is_search_finish.load(Ordering::SeqCst) {
                 self.manager.set_emergency(Pose::from_search_state(
-                    STATE.lock().clone(),
+                    BAG.state.lock().clone(),
                     SQUARE_WIDTH,
                     FRONT_OFFSET,
                 ));
                 let target = self.manager.target().unwrap();
                 self.track(&target);
             } else if self.manager.set_final(Pose::from_search_state(
-                STATE.lock().clone(),
+                BAG.state.lock().clone(),
                 SQUARE_WIDTH,
                 FRONT_OFFSET,
             )) {
@@ -661,7 +657,7 @@ impl Operator {
                 self.stop();
                 tick_off();
                 let rev_start = Node::new(0, 0, RunPosture::South).unwrap();
-                let state = STATE.lock();
+                let state = BAG.state.lock();
                 let x = state.x();
                 let y = state.y();
                 let (x, y, pos) = match state.posture() {
@@ -683,7 +679,11 @@ impl Operator {
             return;
         }
 
-        match (COMMANDER.try_lock(), WALLS.try_lock(), STATE.try_lock()) {
+        match (
+            BAG.commander.try_lock(),
+            BAG.walls.try_lock(),
+            BAG.state.try_lock(),
+        ) {
             (Some(mut commander), Some(walls), Some(mut state)) => {
                 match commander
                     .as_ref()
@@ -715,7 +715,7 @@ impl Operator {
                     is_goal,
                     |coord| {
                         !matches!(
-                            WALLS.lock().wall_state(coord),
+                            BAG.walls.lock().wall_state(coord),
                             WallState::Checked { exists: false }
                         )
                     },
@@ -769,13 +769,6 @@ impl Operator {
         self.panic_led.set_high();
     }
 
-    #[allow(unused)]
-    pub fn measure(&mut self) -> ClockDuration {
-        DEBUG_TIMER.lock().as_mut().unwrap().measure(|| {
-            self.control_search();
-        })
-    }
-
     pub fn clear_interrupt(&mut self) {
         self.control_timer.clear_interrupt(Event::Update);
     }
@@ -792,7 +785,7 @@ impl Pollar {
         macro_rules! poll {
             ($field: ident, $pos: expr) => {
                 if let Ok(distance) = self.tofs.$field.distance(&mut self.i2c) {
-                    TOF_QUEUE.lock().push((distance, $pos)).ok();
+                    BAG.tof_queue.lock().push((distance, $pos)).ok();
                 }
             };
         }
@@ -825,11 +818,11 @@ impl Solver {
 
     pub fn search(&mut self) {
         // search
-        if IS_SEARCH_FINISH.load(Ordering::SeqCst) {
+        if BAG.is_search_finish.load(Ordering::SeqCst) {
             return;
         }
         {
-            let lock = COMMANDER.lock();
+            let lock = BAG.commander.lock();
             if lock.is_some() {
                 return;
             }
@@ -837,13 +830,13 @@ impl Solver {
         }
 
         let walls = {
-            let lock = WALLS.lock();
+            let lock = BAG.walls.lock();
             let walls = lock.clone();
             core::mem::drop(lock);
             walls
         };
         let coord = {
-            let lock = STATE.lock();
+            let lock = BAG.state.lock();
             let coord = lock.coordinate().clone();
             core::mem::drop(lock);
             coord
@@ -853,10 +846,10 @@ impl Solver {
             .search(&coord, |coord| walls.wall_state(coord))
         {
             Ok(Some(next)) => {
-                COMMANDER.lock().replace(next);
+                BAG.commander.lock().replace(next);
             }
             Ok(None) => {
-                IS_SEARCH_FINISH.store(true, Ordering::SeqCst);
+                BAG.is_search_finish.store(true, Ordering::SeqCst);
             }
             Err(err) => unreachable!("{:?}", err),
         }
