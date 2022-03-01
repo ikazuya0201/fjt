@@ -69,10 +69,12 @@ const SENSOR_STDDEV: Length = Length {
     units: PhantomData,
     dimension: PhantomData,
 };
+const WHEEL_RADIUS: Length = Length {
+    value: 0.007,
+    units: PhantomData,
+    dimension: PhantomData,
+};
 const PATH_MAX: usize = 32 * 32;
-
-pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
-
 const FRONT_OFFSET: Length = Length {
     value: 0.01,
     dimension: PhantomData,
@@ -83,6 +85,8 @@ const SQUARE_WIDTH: Length = Length {
     dimension: PhantomData,
     units: PhantomData,
 };
+
+pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
 
 pub fn tick_on() {
     use cortex_m::peripheral::NVIC;
@@ -192,7 +196,6 @@ impl Bag {
         let gpioc = GPIOC.split();
         let gpioh = GPIOH.split();
 
-        let wheel_radius = Length::new::<meter>(0.007);
         let period = Time::new::<second>(0.001);
 
         let mut i2c = {
@@ -227,14 +230,14 @@ impl Bag {
         let right_encoder = {
             let pins = (gpioa.pa0.into_alternate(), gpioa.pa1.into_alternate());
             let qei = Qei::new(TIM2, pins);
-            let encoder = MA702GQ::new(qei, wheel_radius);
+            let encoder = MA702GQ::new(qei);
             encoder
         };
 
         let left_encoder = {
             let pins = (gpiob.pb6.into_alternate(), gpiob.pb7.into_alternate());
             let qei = Qei::new(TIM4, pins);
-            let encoder = MA702GQ::new(qei, wheel_radius);
+            let encoder = MA702GQ::new(qei);
             encoder
         };
 
@@ -552,8 +555,8 @@ impl Operator {
         // estimate
         let sensor_value = {
             SensorValue {
-                left_distance: 1.02 * block!(self.left_encoder.distance()).unwrap(),
-                right_distance: 1.02 * block!(self.right_encoder.distance()).unwrap(),
+                left_distance: -1.02 * block!(self.left_encoder.angle()).unwrap() * WHEEL_RADIUS,
+                right_distance: -1.02 * block!(self.right_encoder.angle()).unwrap() * WHEEL_RADIUS,
                 translational_acceleration: block!(self
                     .imu
                     .translational_acceleration(&mut self.spi))
