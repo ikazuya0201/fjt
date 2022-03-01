@@ -3,7 +3,6 @@
 // #![feature(alloc_error_handler)]
 
 mod init;
-mod types;
 
 // use core::alloc::Layout;
 use core::fmt::Write;
@@ -68,15 +67,20 @@ fn main() -> ! {
     Lazy::force(&SOLVER);
     Lazy::force(&BAG);
 
+    let mut out = Output::new();
     {
         let mut lock = BAG.operator.lock();
-        lock.assert_battery_voltage(ElectricPotential::new::<volt>(3.8));
+        let voltage = lock.battery_voltage();
+        writeln!(out, "voltage: {:?}", voltage).ok();
+        assert!(
+            voltage > ElectricPotential::new::<volt>(3.8),
+            "Low battery voltage!",
+        );
         core::mem::drop(lock);
     }
 
+    writeln!(out, "start!").ok();
     tick_on();
-    let mut out = Output::new();
-    writeln!(out, "hey!").ok();
 
     loop {
         SOLVER.lock().search();
