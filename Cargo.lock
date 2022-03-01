@@ -269,7 +269,7 @@ checksum = "39617bc909d64b068dcffd0e3e31679195b5576d0c83fadc52690268cc2b2b55"
 [[package]]
 name = "mousecore2"
 version = "0.1.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#2afb5e385a7c56ed1af1a89f08e3ad258a6a2fcc"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#d6af384fdf89907d3ee8ca58d40b26891b8efbc4"
 dependencies = [
  "heapless",
  "micromath",
@@ -414,7 +414,7 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 [[package]]
 name = "sensors2"
 version = "0.1.0"
-source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#2afb5e385a7c56ed1af1a89f08e3ad258a6a2fcc"
+source = "git+https://github.com/ikazuya0201/mouse_components.git?branch=master#d6af384fdf89907d3ee8ca58d40b26891b8efbc4"
 dependencies = [
  "embedded-hal 0.2.7",
  "nb 1.0.0",
