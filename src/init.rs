@@ -341,8 +341,8 @@ impl Bag {
         let detector = WallDetector::<W>::default();
 
         let search_manager = TrajectoryConfig::builder()
-            .search_velocity(Velocity::new::<meter_per_second>(0.15))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.15))
+            .search_velocity(Velocity::new::<meter_per_second>(0.3))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
             .v_max(Velocity::new::<meter_per_second>(1.0))
             .a_max(Acceleration::new::<meter_per_second_squared>(1.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(20.0))
