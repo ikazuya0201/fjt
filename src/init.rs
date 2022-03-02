@@ -518,6 +518,9 @@ impl Operator {
                     self.mode = Mode::Search;
                     self.imu
                         .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
+                    // reset encoders
+                    block!(self.left_encoder.angle()).unwrap();
+                    block!(self.right_encoder.angle()).unwrap();
                     tick_on();
                 }
             }
