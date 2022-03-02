@@ -70,7 +70,7 @@ const SENSOR_STDDEV: Length = Length {
     dimension: PhantomData,
 };
 const WHEEL_RADIUS: Length = Length {
-    value: 0.007,
+    value: 0.00707,
     units: PhantomData,
     dimension: PhantomData,
 };
@@ -558,8 +558,8 @@ impl Operator {
         // estimate
         let sensor_value = {
             SensorValue {
-                left_distance: -1.02 * block!(self.left_encoder.angle()).unwrap() * WHEEL_RADIUS,
-                right_distance: -1.02 * block!(self.right_encoder.angle()).unwrap() * WHEEL_RADIUS,
+                left_distance: -block!(self.left_encoder.angle()).unwrap() * WHEEL_RADIUS,
+                right_distance: -block!(self.right_encoder.angle()).unwrap() * WHEEL_RADIUS,
                 translational_acceleration: block!(self
                     .imu
                     .translational_acceleration(&mut self.spi))
