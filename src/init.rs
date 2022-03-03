@@ -389,8 +389,8 @@ impl Bag {
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
             .v_max(Velocity::new::<meter_per_second>(1.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(1.0))
-            .j_max(Jerk::new::<meter_per_second_cubed>(20.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(2.0))
+            .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
                 14400.0,
