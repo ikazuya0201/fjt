@@ -310,7 +310,7 @@ impl Bag {
             .build();
         let navigator = NavigationController::builder()
             .gain(120.0)
-            .dgain(30.0)
+            .dgain(35.0)
             .build();
         let supervisor = SupervisoryController::builder()
             .avoidance_distance(Length::new::<millimeter>(25.0))
@@ -336,7 +336,7 @@ impl Bag {
             .build();
         let estimator = Estimator::builder()
             .period(period)
-            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(35.0))
+            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(50.0))
             .build();
         let detector = WallDetector::<W>::default();
 
@@ -595,46 +595,56 @@ impl Operator {
     }
 
     fn detect_and_correct(&mut self) {
-        let cos_th = self.state.theta.x.value.cos();
-        let sin_th = self.state.theta.x.value.sin();
-        if let Some(mut que) = BAG.tof_queue.try_lock() {
-            while let Some((distance, pos)) = que.pop() {
-                let config = match pos {
-                    TofPosition::Front => &self.tof_configs.front,
-                    TofPosition::Right => &self.tof_configs.right,
-                    TofPosition::Left => &self.tof_configs.left,
-                };
-                let distance = config.1.slope * distance + config.1.intercept;
-                let pose = Pose {
-                    x: self.state.x.x + config.0.x * cos_th - config.0.y * sin_th,
-                    y: self.state.y.x + config.0.x * sin_th + config.0.y * cos_th,
-                    theta: self.state.theta.x + config.0.theta,
-                };
+        match (BAG.tof_queue.try_lock(), BAG.walls.try_lock()) {
+            (Some(mut que), Some(mut walls)) => {
+                let cos_th = self.state.theta.x.value.cos();
+                let sin_th = self.state.theta.x.value.sin();
+                while let Some((distance, pos)) = que.pop() {
+                    let config = match pos {
+                        TofPosition::Front => &self.tof_configs.front,
+                        TofPosition::Right => &self.tof_configs.right,
+                        TofPosition::Left => &self.tof_configs.left,
+                    };
+                    let distance = config.1.slope * distance + config.1.intercept;
+                    let pose = Pose {
+                        x: self.state.x.x + config.0.x * cos_th - config.0.y * sin_th,
+                        y: self.state.y.x + config.0.x * sin_th + config.0.y * cos_th,
+                        theta: self.state.theta.x + config.0.theta,
+                    };
 
-                let mut walls = BAG.walls.lock();
-                if let Some((coord, wall_state)) =
-                    self.detector
-                        .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
-                {
-                    walls.update(&coord, &wall_state);
-                    let info = self.converter.convert(&pose).unwrap();
-                    if matches!(
-                        walls.wall_state(&info.coord),
-                        WallState::Checked { exists: true }
-                    ) {
-                        let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
-                        let var = self.stddev * self.stddev;
-                        let k = (var / (var + sensor_var)).get::<uom::si::ratio::ratio>();
+                    if let Some((coord, wall_state)) =
+                        self.detector
+                            .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
+                    {
+                        walls.update(&coord, &wall_state);
+                    }
 
-                        let distance_diff = k * (info.existing_distance - distance);
-                        let cos_th = pose.theta.value.cos();
-                        let sin_th = pose.theta.value.sin();
-                        self.state.x.x += distance_diff * cos_th;
-                        self.state.y.x += distance_diff * sin_th;
-                        self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
+                    const DISTANCE_TH: Length = Length {
+                        value: 0.05,
+                        units: PhantomData,
+                        dimension: PhantomData,
+                    };
+                    if let Some(info) = self.converter.convert(&pose) {
+                        if matches!(
+                            walls.wall_state(&info.coord),
+                            WallState::Checked { exists: true }
+                        ) && distance < DISTANCE_TH
+                        {
+                            let sensor_var = SENSOR_STDDEV * SENSOR_STDDEV;
+                            let var = self.stddev * self.stddev;
+                            let k = (var / (var + sensor_var)).get::<uom::si::ratio::ratio>();
+
+                            let distance_diff = k * (info.existing_distance - distance);
+                            let cos_th = pose.theta.value.cos();
+                            let sin_th = pose.theta.value.sin();
+                            self.state.x.x += distance_diff * cos_th;
+                            self.state.y.x += distance_diff * sin_th;
+                            self.stddev = Length::new::<meter>((var * (1.0 - k)).value.sqrt());
+                        }
                     }
                 }
             }
+            _ => (),
         }
     }
 
