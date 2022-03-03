@@ -2,7 +2,7 @@ mod trajectory;
 mod types;
 
 use core::{
-    fmt,
+    fmt::{self, Write},
     marker::PhantomData,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -41,6 +41,7 @@ use uom::si::{
     angular_acceleration::degree_per_second_squared,
     angular_jerk::degree_per_second_cubed,
     angular_velocity::degree_per_second,
+    electric_potential::volt,
     f32::{
         Acceleration, Angle, AngularAcceleration, AngularJerk, AngularVelocity, ElectricPotential,
         Frequency, Jerk, Length, Time, Velocity,
@@ -85,6 +86,20 @@ const SQUARE_WIDTH: Length = Length {
     dimension: PhantomData,
     units: PhantomData,
 };
+static INIT_STATE: Lazy<State> = Lazy::new(|| State {
+    x: LengthState {
+        x: Length::new::<millimeter>(45.0),
+        ..Default::default()
+    },
+    y: LengthState {
+        x: Length::new::<millimeter>(45.0),
+        ..Default::default()
+    },
+    theta: AngleState {
+        x: Angle::new::<degree>(90.0),
+        ..Default::default()
+    },
+});
 
 pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
 
@@ -150,16 +165,20 @@ enum Mode {
     Return,
     Run,
     Select,
+    TransIdent,
+    RotIdent,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum IdleMode {
-    Search = 0,
-    Nop,
+    Nop = 0,
+    Search,
+    TransIdent,
+    RotIdent,
 }
 
 impl IdleMode {
-    const N: u8 = 2;
+    const N: u8 = 4;
 }
 
 struct Selector {
@@ -184,8 +203,10 @@ impl Selector {
             .rem_euclid(core::f32::consts::TAU) as u8
             % IdleMode::N
         {
-            0 => IdleMode::Search,
-            1 => IdleMode::Nop,
+            0 => IdleMode::Nop,
+            1 => IdleMode::Search,
+            2 => IdleMode::TransIdent,
+            3 => IdleMode::RotIdent,
             _ => unreachable!(),
         }
     }
@@ -325,23 +346,7 @@ impl Bag {
             (Motor::new(pwm2, pwm1), Motor::new(pwm4, pwm3))
         };
 
-        // common settings
-        let state = State {
-            x: LengthState {
-                x: Length::new::<millimeter>(45.0),
-                ..Default::default()
-            },
-            y: LengthState {
-                x: Length::new::<millimeter>(45.0),
-                ..Default::default()
-            },
-            theta: AngleState {
-                x: Angle::new::<degree>(90.0),
-                ..Default::default()
-            },
-        };
-
-        let state = state;
+        let state = INIT_STATE.clone();
         let tracker = Tracker::builder()
             .period(period)
             .zeta(1.0)
@@ -478,6 +483,8 @@ impl Bag {
                 led2: gpiob.pb1.into_push_pull_output(),
                 selector: Selector::new(),
                 accel: Default::default(),
+
+                ident_data: Vec::new(),
             }),
             pollar: Mutex::new(Pollar {
                 i2c,
@@ -532,6 +539,9 @@ pub struct Operator {
     led2: Led2,
     selector: Selector,
     accel: Acceleration,
+
+    // record for system identification
+    ident_data: Vec<f32, 2_000>,
 }
 
 impl fmt::Debug for Operator {
@@ -554,12 +564,58 @@ impl Operator {
             Mode::Return => self.control_return(),
             Mode::Run => self.control_run(),
             Mode::Select => self.control_select(),
+            Mode::TransIdent => self.control_trans_ident(),
+            Mode::RotIdent => self.control_rot_ident(),
+        }
+    }
+
+    fn control_rot_ident(&mut self) {
+        let voltage = self.voltmeter.voltage();
+        self.left_motor
+            .apply(ElectricPotential::new::<volt>(-0.3), voltage);
+        self.right_motor
+            .apply(ElectricPotential::new::<volt>(0.3), voltage);
+        self.estimate();
+        if self.ident_data.push(self.state.theta.v.value).is_err() {
+            tick_off();
+            self.left_motor.apply(Default::default(), voltage);
+            self.right_motor.apply(Default::default(), voltage);
+            let mut out = jlink_rtt::Output::new();
+            for &v in &self.ident_data {
+                writeln!(out, "{}", v).ok();
+            }
+            self.ident_data.clear();
+            self.mode = Mode::Idle(IdleMode::Search);
+            tick_on();
+        }
+    }
+
+    fn control_trans_ident(&mut self) {
+        let voltage = self.voltmeter.voltage();
+        self.left_motor
+            .apply(ElectricPotential::new::<volt>(0.4), voltage);
+        self.right_motor
+            .apply(ElectricPotential::new::<volt>(0.4), voltage);
+        self.estimate();
+        let state = &self.state;
+        let v = state.x.v * state.theta.x.value.cos() + state.y.v * state.theta.x.value.sin();
+        if self.ident_data.push(v.value).is_err() {
+            tick_off();
+            self.left_motor.apply(Default::default(), voltage);
+            self.right_motor.apply(Default::default(), voltage);
+            let mut out = jlink_rtt::Output::new();
+            for &v in &self.ident_data {
+                writeln!(out, "{}", v).ok();
+            }
+            self.ident_data.clear();
+            self.mode = Mode::Idle(IdleMode::Search);
+            tick_on();
         }
     }
 
     fn is_switch_on(&mut self) -> bool {
         const SELECT_ACCEL: Acceleration = Acceleration {
-            value: 7.0,
+            value: 5.0,
             units: PhantomData,
             dimension: PhantomData,
         };
@@ -568,7 +624,7 @@ impl Operator {
         self.accel = self.accel * ALPHA
             + (1.0 - ALPHA) * block!(self.imu.translational_acceleration(&mut self.spi)).unwrap();
 
-        self.accel > SELECT_ACCEL
+        self.accel.abs() > SELECT_ACCEL
     }
 
     fn display_number_by_led(&mut self, n: u8) {
@@ -596,9 +652,18 @@ impl Operator {
             tick_on();
             return;
         }
-        self.display_number_by_led(mode as u8 + 1);
+        self.display_number_by_led(mode as u8);
         self.selector
             .proceed(block!(self.right_encoder.angle()).unwrap());
+    }
+
+    fn reset_state(&mut self) {
+        self.imu
+            .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
+        // reset encoder
+        block!(self.right_encoder.angle()).unwrap();
+        block!(self.left_encoder.angle()).unwrap();
+        self.state = INIT_STATE.clone();
     }
 
     fn control_idle(&mut self, mode: IdleMode) {
@@ -614,19 +679,21 @@ impl Operator {
         if let Some(mut que) = BAG.tof_queue.try_lock() {
             while let Some((distance, pos)) = que.pop() {
                 if pos == TofPosition::Right && distance < START_LENGTH {
-                    match mode {
-                        IdleMode::Search => {
-                            tick_off();
-                            self.mode = Mode::Search;
-                            self.imu
-                                .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
-                            // reset encoder
-                            block!(self.right_encoder.angle()).unwrap();
-                            block!(self.left_encoder.angle()).unwrap();
-                            tick_on();
+                    tick_off();
+                    self.reset_state();
+                    self.mode = match mode {
+                        IdleMode::Nop => self.mode,
+                        IdleMode::Search => Mode::Search,
+                        IdleMode::TransIdent => {
+                            self.ident_data.clear();
+                            Mode::TransIdent
                         }
-                        IdleMode::Nop => (),
-                    }
+                        IdleMode::RotIdent => {
+                            self.ident_data.clear();
+                            Mode::RotIdent
+                        }
+                    };
+                    tick_on();
                 }
             }
         }
