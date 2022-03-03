@@ -37,7 +37,7 @@ use stm32f4xx_hal::{
 };
 use uom::si::{
     acceleration::meter_per_second_squared,
-    angle::{degree, radian},
+    angle::{degree, revolution},
     angular_acceleration::degree_per_second_squared,
     angular_jerk::degree_per_second_cubed,
     angular_velocity::degree_per_second,
@@ -186,28 +186,25 @@ struct Selector {
 }
 
 impl Selector {
-    fn new() -> Self {
-        Self {
-            angle: Default::default(),
-        }
-    }
-
     fn proceed(&mut self, relative: Angle) {
         self.angle += relative;
     }
 
     fn mode(&self) -> IdleMode {
-        match self
-            .angle
-            .get::<radian>()
-            .rem_euclid(core::f32::consts::TAU) as u8
-            % IdleMode::N
-        {
+        match (self.angle.get::<revolution>() * 3.0).floor() as u8 % IdleMode::N {
             0 => IdleMode::Nop,
             1 => IdleMode::Search,
             2 => IdleMode::TransIdent,
             3 => IdleMode::RotIdent,
             _ => unreachable!(),
+        }
+    }
+}
+
+impl From<IdleMode> for Selector {
+    fn from(mode: IdleMode) -> Self {
+        Self {
+            angle: Angle::new::<revolution>(mode as u8 as f32),
         }
     }
 }
@@ -481,8 +478,7 @@ impl Bag {
                 delay,
                 led1: gpiob.pb12.into_push_pull_output(),
                 led2: gpiob.pb1.into_push_pull_output(),
-                selector: Selector::new(),
-                accel: Default::default(),
+                selector: Selector::from(IdleMode::Search),
 
                 ident_data: Vec::new(),
             }),
@@ -538,7 +534,6 @@ pub struct Operator {
     led1: Led1,
     led2: Led2,
     selector: Selector,
-    accel: Acceleration,
 
     // record for system identification
     ident_data: Vec<f32, 2_000>,
@@ -619,12 +614,22 @@ impl Operator {
             units: PhantomData,
             dimension: PhantomData,
         };
-        const ALPHA: f32 = 0.76;
+        block!(self.imu.translational_acceleration(&mut self.spi))
+            .unwrap()
+            .abs()
+            > SELECT_ACCEL
+    }
 
-        self.accel = self.accel * ALPHA
-            + (1.0 - ALPHA) * block!(self.imu.translational_acceleration(&mut self.spi)).unwrap();
-
-        self.accel.abs() > SELECT_ACCEL
+    fn is_switch_off(&mut self) -> bool {
+        const SELECT_ACCEL: Acceleration = Acceleration {
+            value: 2.0,
+            units: PhantomData,
+            dimension: PhantomData,
+        };
+        block!(self.imu.translational_acceleration(&mut self.spi))
+            .unwrap()
+            .abs()
+            < SELECT_ACCEL
     }
 
     fn display_number_by_led(&mut self, n: u8) {
@@ -645,8 +650,9 @@ impl Operator {
         let mode = self.selector.mode();
         if self.is_switch_on() {
             tick_off();
-            while self.is_switch_on() {}
-            self.accel = Default::default();
+            while !self.is_switch_off() {
+                block!(self.control_timer.wait()).unwrap();
+            }
             self.mode = Mode::Idle(mode);
             self.display_number_by_led(0);
             tick_on();
@@ -654,7 +660,7 @@ impl Operator {
         }
         self.display_number_by_led(mode as u8);
         self.selector
-            .proceed(block!(self.right_encoder.angle()).unwrap());
+            .proceed(-block!(self.right_encoder.angle()).unwrap());
     }
 
     fn reset_state(&mut self) {
@@ -670,8 +676,9 @@ impl Operator {
         if self.is_switch_on() {
             tick_off();
             // wait until switch off
-            while self.is_switch_on() {}
-            self.accel = Default::default();
+            while !self.is_switch_off() {
+                block!(self.control_timer.wait()).unwrap();
+            }
             self.mode = Mode::Select;
             tick_on();
             return;
