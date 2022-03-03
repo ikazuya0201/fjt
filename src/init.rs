@@ -37,7 +37,7 @@ use stm32f4xx_hal::{
 };
 use uom::si::{
     acceleration::meter_per_second_squared,
-    angle::degree,
+    angle::{degree, radian},
     angular_acceleration::degree_per_second_squared,
     angular_jerk::degree_per_second_cubed,
     angular_velocity::degree_per_second,
@@ -54,7 +54,7 @@ use uom::si::{
 
 use trajectory::{TrajectoryConfig, TrajectoryManager};
 use types::{
-    ControlTimer, I2c, Imu, LeftEncoder, LeftMotor, PanicLed, RightEncoder, RightMotor,
+    ControlTimer, I2c, Imu, Led1, Led2, LeftEncoder, LeftMotor, RightEncoder, RightMotor,
     SensorTimer, Spi, Tofs, Voltmeter,
 };
 
@@ -145,10 +145,50 @@ struct TofConfigs {
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
-    Idle,
+    Idle(IdleMode),
     Search,
     Return,
     Run,
+    Select,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum IdleMode {
+    Search = 0,
+    Nop,
+}
+
+impl IdleMode {
+    const N: u8 = 2;
+}
+
+struct Selector {
+    angle: Angle,
+}
+
+impl Selector {
+    fn new() -> Self {
+        Self {
+            angle: Default::default(),
+        }
+    }
+
+    fn proceed(&mut self, relative: Angle) {
+        self.angle += relative;
+    }
+
+    fn mode(&self) -> IdleMode {
+        match self
+            .angle
+            .get::<radian>()
+            .rem_euclid(core::f32::consts::TAU) as u8
+            % IdleMode::N
+        {
+            0 => IdleMode::Search,
+            1 => IdleMode::Nop,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct Bag {
@@ -430,11 +470,14 @@ impl Bag {
                 },
 
                 manager: search_manager,
-                mode: Mode::Idle,
+                mode: Mode::Idle(IdleMode::Search),
 
-                panic_led: gpiob.pb1.into_push_pull_output(),
                 control_timer,
                 delay,
+                led1: gpiob.pb12.into_push_pull_output(),
+                led2: gpiob.pb1.into_push_pull_output(),
+                selector: Selector::new(),
+                accel: Default::default(),
             }),
             pollar: Mutex::new(Pollar {
                 i2c,
@@ -483,9 +526,12 @@ pub struct Operator {
     manager: TrajectoryManager,
     mode: Mode,
 
-    panic_led: PanicLed,
     control_timer: ControlTimer,
     delay: SysDelay,
+    led1: Led1,
+    led2: Led2,
+    selector: Selector,
+    accel: Acceleration,
 }
 
 impl fmt::Debug for Operator {
@@ -503,25 +549,84 @@ impl Operator {
 
     pub fn control(&mut self) {
         match self.mode {
-            Mode::Idle => self.control_idle(),
+            Mode::Idle(mode) => self.control_idle(mode),
             Mode::Search => self.control_search(),
             Mode::Return => self.control_return(),
             Mode::Run => self.control_run(),
+            Mode::Select => self.control_select(),
         }
     }
 
-    fn control_idle(&mut self) {
+    fn is_switch_on(&mut self) -> bool {
+        const SELECT_ACCEL: Acceleration = Acceleration {
+            value: 7.0,
+            units: PhantomData,
+            dimension: PhantomData,
+        };
+        const ALPHA: f32 = 0.76;
+
+        self.accel = self.accel * ALPHA
+            + (1.0 - ALPHA) * block!(self.imu.translational_acceleration(&mut self.spi)).unwrap();
+
+        self.accel > SELECT_ACCEL
+    }
+
+    fn display_number_by_led(&mut self, n: u8) {
+        let n = n & 3;
+        if n & 1 == 1 {
+            self.led1.set_high();
+        } else {
+            self.led1.set_low();
+        }
+        if (n >> 1) & 1 == 1 {
+            self.led2.set_high();
+        } else {
+            self.led2.set_low();
+        }
+    }
+
+    fn control_select(&mut self) {
+        let mode = self.selector.mode();
+        if self.is_switch_on() {
+            tick_off();
+            while self.is_switch_on() {}
+            self.accel = Default::default();
+            self.mode = Mode::Idle(mode);
+            self.display_number_by_led(0);
+            tick_on();
+            return;
+        }
+        self.display_number_by_led(mode as u8 + 1);
+        self.selector
+            .proceed(block!(self.right_encoder.angle()).unwrap());
+    }
+
+    fn control_idle(&mut self, mode: IdleMode) {
+        if self.is_switch_on() {
+            tick_off();
+            // wait until switch off
+            while self.is_switch_on() {}
+            self.accel = Default::default();
+            self.mode = Mode::Select;
+            tick_on();
+            return;
+        }
         if let Some(mut que) = BAG.tof_queue.try_lock() {
             while let Some((distance, pos)) = que.pop() {
                 if pos == TofPosition::Right && distance < START_LENGTH {
-                    tick_off();
-                    self.mode = Mode::Search;
-                    self.imu
-                        .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
-                    // reset encoders
-                    block!(self.left_encoder.angle()).unwrap();
-                    block!(self.right_encoder.angle()).unwrap();
-                    tick_on();
+                    match mode {
+                        IdleMode::Search => {
+                            tick_off();
+                            self.mode = Mode::Search;
+                            self.imu
+                                .init(&mut self.spi, &mut self.delay, &mut self.control_timer);
+                            // reset encoder
+                            block!(self.right_encoder.angle()).unwrap();
+                            block!(self.left_encoder.angle()).unwrap();
+                            tick_on();
+                        }
+                        IdleMode::Nop => (),
+                    }
                 }
             }
         }
@@ -782,7 +887,7 @@ impl Operator {
     }
 
     pub fn turn_on_panic_led(&mut self) {
-        self.panic_led.set_high();
+        self.display_number_by_led(2);
     }
 
     pub fn clear_interrupt(&mut self) {
