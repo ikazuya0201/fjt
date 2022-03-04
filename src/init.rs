@@ -2,7 +2,7 @@ mod trajectory;
 mod types;
 
 use core::{
-    fmt::{self, Write},
+    fmt::Write,
     marker::PhantomData,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -546,14 +546,6 @@ pub struct Operator {
     flash: LockedFlash,
 }
 
-impl fmt::Debug for Operator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Operator")
-            .field("manager", &self.manager)
-            .finish()
-    }
-}
-
 impl Operator {
     pub fn battery_voltage(&mut self) -> ElectricPotential {
         self.voltmeter.voltage()
@@ -701,7 +693,7 @@ impl Operator {
                         IdleMode::Nop => self.mode,
                         IdleMode::Search => {
                             BAG.is_search_finish.store(false, Ordering::SeqCst);
-                            self.manager.set_init();
+                            self.manager.into_search();
                             Mode::Search
                         }
                         IdleMode::Run => {
@@ -986,7 +978,7 @@ impl Operator {
             3 => 90.0,
             _ => unreachable!(),
         });
-        self.manager.init_run(path, init_angle);
+        self.manager.into_run(path, init_angle);
     }
 
     pub fn stop(&mut self) {

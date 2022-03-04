@@ -35,7 +35,6 @@ fn panic(info: &PanicInfo) -> ! {
     let mut operator = BAG.operator.lock();
     operator.stop();
     operator.turn_on_panic_led();
-    writeln!(out, "{:?}", operator).ok();
     writeln!(out, "{:?}", BAG.commander.lock()).ok();
     writeln!(out, "{}", BAG.walls.lock()).ok();
     loop {}
