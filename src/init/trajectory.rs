@@ -85,6 +85,7 @@ pub struct TrajectoryConfig {
 pub struct TrajectoryManager {
     trajectories: Deque<ShiftTrajectory<Trajectory>, 3>,
     fin: Option<Trajectory>,
+    init: ShiftTrajectory<Trajectory>,
     front: Trajectory,
     right: Trajectory,
     left: Trajectory,
@@ -189,6 +190,10 @@ impl TrajectoryManager {
         }
     }
 
+    pub fn set_init(&mut self) {
+        self.trajectories.push_back(self.init.clone()).ok();
+    }
+
     pub fn set_final(&mut self, pose: Pose) -> bool {
         if let Some(fin) = self.fin.take() {
             self.trajectories
@@ -290,11 +295,14 @@ impl From<TrajectoryConfig> for TrajectoryManager {
         let spin = SpinGenerator::new(spin_v_max, spin_a_max, spin_j_max, period);
         let straight = StraightGenerator::new(v_max, a_max, j_max, period);
 
-        let init = Trajectory::Straight(straight.generate(
-            square_width / 2.0 + front_offset,
-            Default::default(),
-            search_velocity,
-        ));
+        let init = ShiftTrajectory::new(
+            initial_pose,
+            Trajectory::Straight(straight.generate(
+                square_width / 2.0 + front_offset,
+                Default::default(),
+                search_velocity,
+            )),
+        );
         let fin = Trajectory::Straight(straight.generate(
             square_width / 2.0 - front_offset,
             search_velocity,
@@ -363,13 +371,10 @@ impl From<TrajectoryConfig> for TrajectoryManager {
             },
             back.clone(),
         ));
-        let mut trajectories = Deque::new();
-        trajectories
-            .push_back(ShiftTrajectory::new(initial_pose, init))
-            .ok();
         Self {
-            trajectories,
+            trajectories: Deque::new(),
             fin: Some(fin),
+            init,
             front,
             left,
             right,

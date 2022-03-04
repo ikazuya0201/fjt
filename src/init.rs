@@ -28,6 +28,7 @@ use sensors2::{encoder::MA702GQ, imu::ICM20648, motor::Motor, tof::VL6180X};
 use spin::{Lazy, Mutex};
 use stm32f4xx_hal::{
     adc::{config::AdcConfig, Adc},
+    flash::{FlashExt, LockedFlash},
     interrupt,
     nb::block,
     pac,
@@ -165,20 +166,21 @@ enum Mode {
     Return,
     Run,
     Select,
-    TransIdent,
-    RotIdent,
+    // TransIdent,
+    // RotIdent,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum IdleMode {
     Nop = 0,
     Search,
-    TransIdent,
-    RotIdent,
+    Run,
+    // TransIdent,
+    // RotIdent,
 }
 
 impl IdleMode {
-    const N: u8 = 4;
+    const N: u8 = 3;
 }
 
 struct Selector {
@@ -194,8 +196,9 @@ impl Selector {
         match (self.angle.get::<revolution>() * 3.0).floor() as u8 % IdleMode::N {
             0 => IdleMode::Nop,
             1 => IdleMode::Search,
-            2 => IdleMode::TransIdent,
-            3 => IdleMode::RotIdent,
+            2 => IdleMode::Run,
+            // 3 => IdleMode::TransIdent,
+            // 4 => IdleMode::RotIdent,
             _ => unreachable!(),
         }
     }
@@ -237,6 +240,7 @@ impl Bag {
             TIM4,
             TIM5,
             TIM7,
+            FLASH,
             ..
         } = pac::Peripherals::take().unwrap();
         let rcc = RCC.constrain();
@@ -481,6 +485,7 @@ impl Bag {
                 selector: Selector::from(IdleMode::Search),
 
                 ident_data: Vec::new(),
+                flash: LockedFlash::new(FLASH),
             }),
             pollar: Mutex::new(Pollar {
                 i2c,
@@ -536,7 +541,9 @@ pub struct Operator {
     selector: Selector,
 
     // record for system identification
+    #[allow(unused)]
     ident_data: Vec<f32, 2_000>,
+    flash: LockedFlash,
 }
 
 impl fmt::Debug for Operator {
@@ -559,11 +566,12 @@ impl Operator {
             Mode::Return => self.control_return(),
             Mode::Run => self.control_run(),
             Mode::Select => self.control_select(),
-            Mode::TransIdent => self.control_trans_ident(),
-            Mode::RotIdent => self.control_rot_ident(),
+            // Mode::TransIdent => self.control_trans_ident(),
+            // Mode::RotIdent => self.control_rot_ident(),
         }
     }
 
+    #[allow(unused)]
     fn control_rot_ident(&mut self) {
         let voltage = self.voltmeter.voltage();
         self.left_motor
@@ -585,6 +593,7 @@ impl Operator {
         }
     }
 
+    #[allow(unused)]
     fn control_trans_ident(&mut self) {
         let voltage = self.voltmeter.voltage();
         self.left_motor
@@ -690,15 +699,29 @@ impl Operator {
                     self.reset_state();
                     self.mode = match mode {
                         IdleMode::Nop => self.mode,
-                        IdleMode::Search => Mode::Search,
-                        IdleMode::TransIdent => {
-                            self.ident_data.clear();
-                            Mode::TransIdent
+                        IdleMode::Search => {
+                            BAG.is_search_finish.store(false, Ordering::SeqCst);
+                            self.manager.set_init();
+                            Mode::Search
                         }
-                        IdleMode::RotIdent => {
-                            self.ident_data.clear();
-                            Mode::RotIdent
-                        }
+                        IdleMode::Run => {
+                            use RunPosture::*;
+                            *BAG.walls.lock() = self.load_walls_from_flash();
+                            BAG.is_search_finish.store(true, Ordering::SeqCst);
+                            let goals = [(2, 0, South), (2, 0, West)]
+                                .map(|(x, y, pos)| Node::new(x, y, pos).unwrap());
+                            self.init_run(Node::new(0, 0, North).unwrap(), |node| {
+                                goals.iter().any(|goal| node == goal)
+                            });
+                            Mode::Run
+                        } // IdleMode::TransIdent => {
+                          //     self.ident_data.clear();
+                          //     Mode::TransIdent
+                          // }
+                          // IdleMode::RotIdent => {
+                          //     self.ident_data.clear();
+                          //     Mode::RotIdent
+                          // }
                     };
                     tick_on();
                 }
@@ -827,6 +850,18 @@ impl Operator {
         }
     }
 
+    fn store_walls_to_flash(&mut self, walls: &Walls<W>) {
+        let mut flash = self.flash.unlocked();
+        flash.erase(1).unwrap();
+        flash.program(16 * 1024, walls.as_bytes().iter()).unwrap();
+    }
+
+    fn load_walls_from_flash(&self) -> Walls<W> {
+        let bytes = self.flash.read();
+        let offset = 16 * 1024;
+        Walls::try_from(&bytes[offset..offset + 512]).unwrap()
+    }
+
     fn control_search(&mut self) {
         self.estimate();
 
@@ -863,6 +898,7 @@ impl Operator {
                 };
                 self.init_run(Node::new(x, y, pos).unwrap(), |node| &rev_start == node);
                 self.mode = Mode::Return;
+                self.store_walls_to_flash(&*BAG.walls.lock());
                 tick_on();
                 return;
             }
