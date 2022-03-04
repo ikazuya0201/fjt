@@ -175,12 +175,13 @@ enum IdleMode {
     Nop = 0,
     Search,
     Run,
+    AddSearch,
     // TransIdent,
     // RotIdent,
 }
 
 impl IdleMode {
-    const N: u8 = 3;
+    const N: u8 = 4;
 }
 
 struct Selector {
@@ -197,6 +198,7 @@ impl Selector {
             0 => IdleMode::Nop,
             1 => IdleMode::Search,
             2 => IdleMode::Run,
+            3 => IdleMode::AddSearch,
             // 3 => IdleMode::TransIdent,
             // 4 => IdleMode::RotIdent,
             _ => unreachable!(),
@@ -719,6 +721,12 @@ impl Operator {
                                 goals.iter().any(|goal| node == goal)
                             });
                             Mode::Run
+                        }
+                        IdleMode::AddSearch => {
+                            *BAG.walls.lock() = self.load_walls_from_flash();
+                            BAG.is_search_finish.store(false, Ordering::SeqCst);
+                            self.manager.into_search();
+                            Mode::Search
                         } // IdleMode::TransIdent => {
                           //     self.ident_data.clear();
                           //     Mode::TransIdent
