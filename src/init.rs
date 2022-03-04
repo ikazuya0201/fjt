@@ -54,7 +54,7 @@ use uom::si::{
     velocity::meter_per_second,
 };
 
-use trajectory::{TrajectoryConfig, TrajectoryManager};
+use trajectory::{Command, TrajectoryConfig, TrajectoryManager};
 use types::{
     ControlTimer, I2c, Imu, Led1, Led2, LeftEncoder, LeftMotor, RightEncoder, RightMotor,
     SensorTimer, Spi, Tofs, Voltmeter,
@@ -175,12 +175,13 @@ enum IdleMode {
     Nop = 0,
     Search,
     Run,
+    AddSearch,
     // TransIdent,
     // RotIdent,
 }
 
 impl IdleMode {
-    const N: u8 = 3;
+    const N: u8 = 4;
 }
 
 struct Selector {
@@ -197,6 +198,7 @@ impl Selector {
             0 => IdleMode::Nop,
             1 => IdleMode::Search,
             2 => IdleMode::Run,
+            3 => IdleMode::AddSearch,
             // 3 => IdleMode::TransIdent,
             // 4 => IdleMode::RotIdent,
             _ => unreachable!(),
@@ -547,6 +549,18 @@ pub struct Operator {
 }
 
 impl Operator {
+    fn load_walls_from_flash(&self) -> Walls<W> {
+        let bytes = self.flash.read();
+        let offset = 16 * 1024;
+        Walls::try_from(&bytes[offset..offset + 512]).unwrap()
+    }
+
+    fn store_walls_to_flash(&mut self, walls: &Walls<W>) {
+        let mut flash = self.flash.unlocked();
+        flash.erase(1).unwrap();
+        flash.program(16 * 1024, walls.as_bytes().iter()).unwrap();
+    }
+
     pub fn battery_voltage(&mut self) -> ElectricPotential {
         self.voltmeter.voltage()
     }
@@ -698,6 +712,7 @@ impl Operator {
                         }
                         IdleMode::Run => {
                             use RunPosture::*;
+
                             *BAG.walls.lock() = self.load_walls_from_flash();
                             BAG.is_search_finish.store(true, Ordering::SeqCst);
                             let goals = [(2, 0, South), (2, 0, West)]
@@ -706,6 +721,12 @@ impl Operator {
                                 goals.iter().any(|goal| node == goal)
                             });
                             Mode::Run
+                        }
+                        IdleMode::AddSearch => {
+                            *BAG.walls.lock() = self.load_walls_from_flash();
+                            BAG.is_search_finish.store(false, Ordering::SeqCst);
+                            self.manager.into_search();
+                            Mode::Search
                         } // IdleMode::TransIdent => {
                           //     self.ident_data.clear();
                           //     Mode::TransIdent
@@ -724,15 +745,20 @@ impl Operator {
     fn control_run(&mut self) {
         self.estimate();
         self.detect_and_correct();
-        let target = self.manager.target().unwrap();
-        self.track(&target);
+        match self.manager.command().unwrap() {
+            Command::Track(target) => self.track(&target),
+            _ => unreachable!(),
+        }
     }
 
     fn control_return(&mut self) {
         self.estimate();
         self.detect_and_correct();
-        if let Some(target) = self.manager.target() {
-            self.track(&target);
+        if let Some(command) = self.manager.command() {
+            match command {
+                Command::Track(target) => self.track(&target),
+                _ => unreachable!(),
+            }
         } else {
             use RunPosture::*;
 
@@ -842,23 +868,19 @@ impl Operator {
         }
     }
 
-    fn store_walls_to_flash(&mut self, walls: &Walls<W>) {
-        let mut flash = self.flash.unlocked();
-        flash.erase(1).unwrap();
-        flash.program(16 * 1024, walls.as_bytes().iter()).unwrap();
-    }
-
-    fn load_walls_from_flash(&self) -> Walls<W> {
-        let bytes = self.flash.read();
-        let offset = 16 * 1024;
-        Walls::try_from(&bytes[offset..offset + 512]).unwrap()
-    }
-
     fn control_search(&mut self) {
         self.estimate();
 
-        if let Some(target) = self.manager.target() {
-            self.track(&target);
+        if let Some(command) = self.manager.command() {
+            match command {
+                Command::Track(target) => self.track(&target),
+                Command::Operation => {
+                    tick_off();
+                    self.stop();
+                    self.store_walls_to_flash(&*BAG.walls.lock());
+                    tick_on();
+                }
+            }
         } else {
             if !BAG.is_search_finish.load(Ordering::SeqCst) {
                 self.manager.set_emergency(Pose::from_search_state(
@@ -866,15 +888,19 @@ impl Operator {
                     SQUARE_WIDTH,
                     FRONT_OFFSET,
                 ));
-                let target = self.manager.target().unwrap();
-                self.track(&target);
+                match self.manager.command().unwrap() {
+                    Command::Track(target) => self.track(&target),
+                    _ => unreachable!(),
+                }
             } else if self.manager.set_final(Pose::from_search_state(
                 BAG.state.lock().clone(),
                 SQUARE_WIDTH,
                 FRONT_OFFSET,
             )) {
-                let target = self.manager.target().unwrap();
-                self.track(&target);
+                match self.manager.command().unwrap() {
+                    Command::Track(target) => self.track(&target),
+                    _ => unreachable!(),
+                }
             } else {
                 self.stop();
                 tick_off();
