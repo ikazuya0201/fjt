@@ -87,6 +87,11 @@ const SQUARE_WIDTH: Length = Length {
     dimension: PhantomData,
     units: PhantomData,
 };
+const VOLTAGE_LIMIT: ElectricPotential = ElectricPotential {
+    value: 3.8,
+    dimension: PhantomData,
+    units: PhantomData,
+};
 static INIT_STATE: Lazy<State> = Lazy::new(|| State {
     x: LengthState {
         x: Length::new::<millimeter>(45.0),
@@ -223,6 +228,7 @@ pub struct Bag {
     pub commander: Mutex<Option<Commander<W>>>,
     is_search_finish: AtomicBool,
     tof_queue: Mutex<Vec<(Length, TofPosition), 3>>,
+    voltage: Mutex<ElectricPotential>,
 }
 
 impl Bag {
@@ -288,7 +294,13 @@ impl Bag {
         let voltmeter = {
             let adc = Adc::adc1(ADC1, true, AdcConfig::default());
             let pa7 = gpioa.pa7.into_analog();
-            Voltmeter::new(adc, pa7, period, Frequency::new::<hertz>(1.0), 1.86)
+            Voltmeter::new(
+                adc,
+                pa7,
+                Time::new::<second>(0.005),
+                Frequency::new::<hertz>(1.0),
+                1.86,
+            )
         };
 
         let right_encoder = {
@@ -421,6 +433,7 @@ impl Bag {
             NVIC.set_priority(interrupt::TIM7, 1);
         }
 
+        let voltage = voltmeter.voltage();
         Bag {
             operator: Mutex::new(Operator {
                 tracker,
@@ -436,7 +449,7 @@ impl Bag {
 
                 spi,
                 imu,
-                voltmeter,
+                voltage,
                 left_encoder,
                 right_encoder,
                 left_motor,
@@ -497,6 +510,7 @@ impl Bag {
                     left: tof_left,
                 },
                 timer: sensor_timer,
+                voltmeter,
             }),
             solver: Mutex::new(Solver::new()),
             walls: Mutex::new(Walls::new()),
@@ -506,6 +520,7 @@ impl Bag {
             commander: Mutex::new(None),
             is_search_finish: AtomicBool::new(false),
             tof_queue: Mutex::new(Vec::new()),
+            voltage: Mutex::new(voltage),
         }
     }
 }
@@ -531,7 +546,7 @@ pub struct Operator {
     left_motor: LeftMotor,
     right_motor: RightMotor,
     tof_configs: TofConfigs,
-    voltmeter: Voltmeter,
+    voltage: ElectricPotential,
 
     manager: TrajectoryManager,
     mode: Mode,
@@ -561,10 +576,6 @@ impl Operator {
         flash.program(16 * 1024, walls.as_bytes().iter()).unwrap();
     }
 
-    pub fn battery_voltage(&mut self) -> ElectricPotential {
-        self.voltmeter.voltage()
-    }
-
     pub fn control(&mut self) {
         match self.mode {
             Mode::Idle(mode) => self.control_idle(mode),
@@ -579,7 +590,7 @@ impl Operator {
 
     #[allow(unused)]
     fn control_rot_ident(&mut self) {
-        let voltage = self.voltmeter.voltage();
+        let voltage = self.voltage;
         self.left_motor
             .apply(ElectricPotential::new::<volt>(-0.3), voltage);
         self.right_motor
@@ -601,7 +612,7 @@ impl Operator {
 
     #[allow(unused)]
     fn control_trans_ident(&mut self) {
-        let voltage = self.voltmeter.voltage();
+        let voltage = self.voltage;
         self.left_motor
             .apply(ElectricPotential::new::<volt>(0.4), voltage);
         self.right_motor
@@ -808,10 +819,12 @@ impl Operator {
             panic!("fail safe!");
         }
 
-        // let voltage = ElectricPotential::new::<volt>(3.9);
-        let voltage = self.voltmeter.voltage();
-        self.left_motor.apply(vol.left, voltage);
-        self.right_motor.apply(vol.right, voltage);
+        // update voltage
+        if let Some(voltage) = BAG.voltage.try_lock() {
+            self.voltage = *voltage;
+        }
+        self.left_motor.apply(vol.left, self.voltage);
+        self.right_motor.apply(vol.right, self.voltage);
     }
 
     fn detect_and_correct(&mut self) {
@@ -1008,10 +1021,8 @@ impl Operator {
     }
 
     pub fn stop(&mut self) {
-        self.left_motor
-            .apply(Default::default(), self.voltmeter.voltage());
-        self.right_motor
-            .apply(Default::default(), self.voltmeter.voltage());
+        self.left_motor.apply(Default::default(), self.voltage);
+        self.right_motor.apply(Default::default(), self.voltage);
     }
 
     pub fn turn_on_panic_led(&mut self) {
@@ -1027,6 +1038,7 @@ pub struct Pollar {
     i2c: I2c,
     tofs: Tofs,
     timer: SensorTimer,
+    voltmeter: Voltmeter,
 }
 
 impl Pollar {
@@ -1041,6 +1053,12 @@ impl Pollar {
         poll!(front, TofPosition::Front);
         poll!(right, TofPosition::Right);
         poll!(left, TofPosition::Left);
+        self.voltmeter.update_voltage();
+        let voltage = self.voltmeter.voltage();
+        if voltage < VOLTAGE_LIMIT {
+            panic!("Low voltage!: {:?}", voltage);
+        }
+        *BAG.voltage.lock() = voltage;
     }
 
     pub fn clear_interrupt(&mut self) {
