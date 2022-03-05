@@ -167,9 +167,9 @@ struct TofConfigs {
 #[derive(Clone, Copy, Debug)]
 enum Mode {
     Idle(IdleMode),
-    Search,
-    Return,
-    Run,
+    Search { run_number: usize },
+    Return { run_number: usize },
+    Run { run_number: usize },
     Select,
     // TransIdent,
     // RotIdent,
@@ -579,9 +579,9 @@ impl Operator {
     pub fn control(&mut self) {
         match self.mode {
             Mode::Idle(mode) => self.control_idle(mode),
-            Mode::Search => self.control_search(),
-            Mode::Return => self.control_return(),
-            Mode::Run => self.control_run(),
+            Mode::Search { run_number } => self.control_search(run_number),
+            Mode::Return { run_number } => self.control_return(run_number),
+            Mode::Run { run_number } => self.control_run(run_number),
             Mode::Select => self.control_select(),
             // Mode::TransIdent => self.control_trans_ident(),
             // Mode::RotIdent => self.control_rot_ident(),
@@ -719,7 +719,7 @@ impl Operator {
                         IdleMode::Search => {
                             BAG.is_search_finish.store(false, Ordering::SeqCst);
                             self.manager.into_search();
-                            Mode::Search
+                            Mode::Search { run_number: 4 }
                         }
                         IdleMode::Run => {
                             use RunPosture::*;
@@ -731,13 +731,13 @@ impl Operator {
                             self.init_run(Node::new(0, 0, North).unwrap(), |node| {
                                 goals.iter().any(|goal| node == goal)
                             });
-                            Mode::Run
+                            Mode::Run { run_number: 1 }
                         }
                         IdleMode::AddSearch => {
                             *BAG.walls.lock() = self.load_walls_from_flash();
                             BAG.is_search_finish.store(false, Ordering::SeqCst);
                             self.manager.into_search();
-                            Mode::Search
+                            Mode::Search { run_number: 0 }
                         } // IdleMode::TransIdent => {
                           //     self.ident_data.clear();
                           //     Mode::TransIdent
@@ -753,16 +753,27 @@ impl Operator {
         }
     }
 
-    fn control_run(&mut self) {
+    fn control_run(&mut self, run_number: usize) {
         self.estimate();
         self.detect_and_correct();
-        match self.manager.command().unwrap() {
-            Command::Track(target) => self.track(&target),
+        match self.manager.command() {
+            Some(Command::Track(target)) => self.track(&target),
+            None => {
+                use RunPosture::*;
+
+                self.stop();
+                tick_off();
+                let goal = Node::new(0, 0, South).unwrap();
+                let start = self.manager.last_node().unwrap();
+                self.init_run(start, |node| goal == *node);
+                self.mode = Mode::Return { run_number };
+                tick_on();
+            }
             _ => unreachable!(),
         }
     }
 
-    fn control_return(&mut self) {
+    fn control_return(&mut self, run_number: usize) {
         self.estimate();
         self.detect_and_correct();
         if let Some(command) = self.manager.command() {
@@ -780,7 +791,13 @@ impl Operator {
             self.init_run(Node::new(0, 0, South).unwrap(), |node| {
                 goals.iter().any(|goal| node == goal)
             });
-            self.mode = Mode::Run;
+            self.mode = if run_number > 0 {
+                Mode::Run {
+                    run_number: run_number - 1,
+                }
+            } else {
+                Mode::Idle(IdleMode::Nop)
+            };
             tick_on();
         }
     }
@@ -881,7 +898,7 @@ impl Operator {
         }
     }
 
-    fn control_search(&mut self) {
+    fn control_search(&mut self, run_number: usize) {
         self.estimate();
 
         if let Some(command) = self.manager.command() {
@@ -928,7 +945,7 @@ impl Operator {
                     SearchPosture::West => (x - 1, y, RunPosture::West),
                 };
                 self.init_run(Node::new(x, y, pos).unwrap(), |node| &rev_start == node);
-                self.mode = Mode::Return;
+                self.mode = Mode::Return { run_number };
                 self.store_walls_to_flash(&*BAG.walls.lock());
                 tick_on();
                 return;

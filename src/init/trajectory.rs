@@ -162,6 +162,13 @@ impl TrajectoryManager {
     pub fn into_search(&mut self) {
         self.state = ManagerState::Search(SearchTrajectoryManager::new(self.config.clone()));
     }
+
+    pub fn last_node(&mut self) -> Option<Node<W>> {
+        match &mut self.state {
+            ManagerState::Run(inner) => inner.path.last().cloned(),
+            _ => None,
+        }
+    }
 }
 
 impl From<TrajectoryConfig> for TrajectoryManager {
