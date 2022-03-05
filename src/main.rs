@@ -14,7 +14,6 @@ use cortex_m_rt::entry;
 use jlink_rtt::Output;
 use spin::Lazy;
 use stm32f4xx_hal::interrupt;
-use uom::si::{electric_potential::volt, f32::ElectricPotential};
 
 use init::{tick_on, BAG};
 
@@ -66,17 +65,6 @@ fn main() -> ! {
     Lazy::force(&BAG);
 
     let mut out = Output::new();
-    {
-        let mut lock = BAG.operator.lock();
-        let voltage = lock.battery_voltage();
-        writeln!(out, "voltage: {:?}", voltage).ok();
-        assert!(
-            voltage > ElectricPotential::new::<volt>(3.8),
-            "Low battery voltage!",
-        );
-        core::mem::drop(lock);
-    }
-
     writeln!(out, "start!").ok();
     tick_on();
 
