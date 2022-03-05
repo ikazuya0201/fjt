@@ -209,7 +209,7 @@ impl Selector {
 impl From<IdleMode> for Selector {
     fn from(mode: IdleMode) -> Self {
         Self {
-            angle: Angle::new::<revolution>(mode as u8 as f32),
+            angle: Angle::new::<revolution>((mode as u8 as f32 + 0.5) / 3.0),
         }
     }
 }
@@ -388,7 +388,7 @@ impl Bag {
             .build();
         let detector = WallDetector::<W>::default();
 
-        let search_manager = TrajectoryConfig::builder()
+        let manager = TrajectoryConfig::builder()
             .search_velocity(Velocity::new::<meter_per_second>(0.3))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
             .v_max(Velocity::new::<meter_per_second>(1.0))
@@ -477,7 +477,7 @@ impl Bag {
                     ),
                 },
 
-                manager: search_manager,
+                manager,
                 mode: Mode::Idle(IdleMode::Search),
 
                 control_timer,
