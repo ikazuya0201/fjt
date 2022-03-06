@@ -372,7 +372,7 @@ impl Bag {
             .build();
         let navigator = NavigationController::builder()
             .gain(120.0)
-            .dgain(50.0)
+            .dgain(40.0)
             .build();
         let supervisor = SupervisoryController::builder()
             .avoidance_distance(Length::new::<millimeter>(25.0))
@@ -406,7 +406,7 @@ impl Bag {
             .search_velocity(Velocity::new::<meter_per_second>(0.35))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
             .v_max(Velocity::new::<meter_per_second>(2.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(30.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(200.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
@@ -743,7 +743,7 @@ impl Operator {
                             self.init_run(Node::new(0, 0, North).unwrap(), |node| {
                                 goals.iter().any(|goal| node == goal)
                             });
-                            Mode::Run { run_number: 1 }
+                            Mode::Run { run_number: 0 }
                         }
                         IdleMode::AddSearch => {
                             *BAG.walls.lock() = self.load_walls_from_flash();
@@ -767,7 +767,7 @@ impl Operator {
 
     fn control_run(&mut self, run_number: usize) {
         self.estimate();
-        self.detect_and_correct();
+        self.correct(false);
         match self.manager.command() {
             Some(Command::Track(target)) => self.track(&target),
             None => {
@@ -786,7 +786,7 @@ impl Operator {
 
     fn control_return(&mut self, run_number: usize) {
         self.estimate();
-        self.detect_and_correct();
+        self.correct(false);
         if let Some(command) = self.manager.command() {
             match command {
                 Command::Track(target) => self.track(&target),
@@ -858,7 +858,8 @@ impl Operator {
         self.right_motor.apply(vol.right, self.voltage);
     }
 
-    fn detect_and_correct(&mut self) {
+    // TODO: Remove `with_detect` and separate this method into detect and correct
+    fn correct(&mut self, with_detect: bool) {
         match (BAG.tof_queue.try_lock(), BAG.walls.try_lock()) {
             (Some(mut que), Some(mut walls)) => {
                 let current_clock = BAG.clock.load(Ordering::SeqCst);
@@ -886,11 +887,13 @@ impl Operator {
                         theta: self.state.theta.x + config.0.theta,
                     };
 
-                    if let Some((coord, wall_state)) =
-                        self.detector
-                            .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
-                    {
-                        walls.update(&coord, &wall_state);
+                    if with_detect {
+                        if let Some((coord, wall_state)) =
+                            self.detector
+                                .detect_and_update(&distance, &SENSOR_STDDEV, &pose)
+                        {
+                            walls.update(&coord, &wall_state);
+                        }
                     }
 
                     const DISTANCE_TH: Length = Length {
@@ -974,7 +977,7 @@ impl Operator {
             }
         };
 
-        self.detect_and_correct();
+        self.correct(true);
 
         if self.manager.is_full() {
             return;
