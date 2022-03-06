@@ -35,11 +35,10 @@ type BackAfterTrajectory = Chain<
     ShiftTrajectory<StraightTrajectory>,
 >;
 
-type BackTrajectory = Chain<BackBeforeTrajectory, BackAfterTrajectory>;
-
 type SetupTrajectory = Chain<Chain<StopTrajectory, SpinTrajectory>, StopTrajectory>;
 
-type EmergencyTrajectory = Chain<BackTrajectory, ShiftTrajectory<BackTrajectory>>;
+type EmergencyRecoveryTrajectory =
+    ShiftTrajectory<Chain<SpinTrajectory, ShiftTrajectory<StraightTrajectory>>>;
 
 #[derive(Clone)]
 enum Trajectory {
@@ -52,7 +51,7 @@ enum Trajectory {
     },
     Stop(StopTrajectory),
     Setup(ShiftTrajectory<SetupTrajectory>),
-    Emergency(ShiftTrajectory<EmergencyTrajectory>),
+    EmergencyRecovery(ShiftTrajectory<EmergencyRecoveryTrajectory>),
 }
 
 #[derive(Clone, Copy)]
@@ -89,7 +88,7 @@ impl Iterator for Trajectory {
             },
             Stop(inner) => inner.next().map(Command::Track),
             Setup(inner) => inner.next().map(Command::Track),
-            Emergency(inner) => inner.next().map(Command::Track),
+            EmergencyRecovery(inner) => inner.next().map(Command::Track),
         }
     }
 }
@@ -185,15 +184,27 @@ enum ManagerState {
     Run(RunTrajectoryManager),
 }
 
+enum SearchManagerState {
+    Normal,
+    Emergency,
+}
+
 struct SearchTrajectoryManager {
     trajectories: Deque<Trajectory, 3>,
+
     fin: Option<StraightTrajectory>,
     front: StraightTrajectory,
     right: SlalomTrajectory,
     left: SlalomTrajectory,
     back_before: BackBeforeTrajectory,
     back_after: BackAfterTrajectory,
-    emergency: EmergencyTrajectory,
+
+    front_emergency: ShiftTrajectory<StraightTrajectory>,
+    right_emergency: EmergencyRecoveryTrajectory,
+    left_emergency: EmergencyRecoveryTrajectory,
+    back_emergency: EmergencyRecoveryTrajectory,
+
+    state: SearchManagerState,
 }
 
 impl SearchTrajectoryManager {
@@ -217,17 +228,16 @@ impl SearchTrajectoryManager {
         let slalom = SlalomGenerator::new(period, v_max, a_max, j_max);
         let spin = SpinGenerator::new(spin_v_max, spin_a_max, spin_j_max, period);
         let straight = StraightGenerator::new(v_max, a_max, j_max, period);
+        let square_width_half = square_width / 2.0;
 
-        let init = Trajectory::Straight(ShiftTrajectory::new(
-            initial_pose,
-            straight.generate(
-                square_width / 2.0 + front_offset,
-                Default::default(),
-                search_velocity,
-            ),
-        ));
+        let init_raw = straight.generate(
+            square_width_half + front_offset,
+            Default::default(),
+            search_velocity,
+        );
+        let init = Trajectory::Straight(ShiftTrajectory::new(initial_pose, init_raw.clone()));
         let fin = straight.generate(
-            square_width / 2.0 - front_offset,
+            square_width_half - front_offset,
             search_velocity,
             Default::default(),
         );
@@ -240,15 +250,19 @@ impl SearchTrajectoryManager {
             slalom_config.parameters(SlalomKind::Search90, SlalomDirection::Left),
             search_velocity,
         );
+
+        let right_angle = Angle::new::<degree>(-90.0);
+        let left_angle = Angle::new::<degree>(90.0);
+        let back_angle = Angle::new::<degree>(180.0);
         let back_before = straight
             .generate(
-                square_width / 2.0 - front_offset,
+                square_width_half - front_offset,
                 search_velocity,
                 Default::default(),
             )
             .chain(StopTrajectory::new(
                 Pose {
-                    x: square_width / 2.0 - front_offset,
+                    x: square_width_half - front_offset,
                     ..Default::default()
                 },
                 period,
@@ -256,41 +270,67 @@ impl SearchTrajectoryManager {
             ));
         let back_after = ShiftTrajectory::new(
             Pose {
-                x: square_width / 2.0 - front_offset,
+                x: square_width_half - front_offset,
                 ..Default::default()
             },
-            spin.generate(Angle::new::<degree>(180.0)),
+            spin.generate(back_angle),
         )
         .chain(StopTrajectory::new(
             Pose {
-                x: square_width / 2.0 - front_offset,
+                x: square_width_half - front_offset,
                 y: Default::default(),
-                theta: Angle::new::<degree>(180.0),
+                theta: back_angle,
             },
             period,
             Time::new::<second>(0.1),
         ))
         .chain(ShiftTrajectory::new(
             Pose {
-                x: square_width / 2.0 - front_offset,
+                x: square_width_half - front_offset,
                 y: Default::default(),
-                theta: Angle::new::<degree>(180.0),
+                theta: back_angle,
             },
             straight.generate(
-                square_width / 2.0 + front_offset,
+                square_width_half + front_offset,
                 Default::default(),
                 search_velocity,
             ),
         ));
-        let back = back_before.clone().chain(back_after.clone());
-        let emergency = back.clone().chain(ShiftTrajectory::new(
-            Pose {
-                x: -2.0 * front_offset,
-                y: Default::default(),
-                theta: Angle::new::<degree>(180.0),
-            },
-            back.clone(),
-        ));
+        let emergency_shift = Pose {
+            x: square_width_half - front_offset,
+            ..Default::default()
+        };
+        let front_emergency = ShiftTrajectory::new(emergency_shift, init_raw.clone());
+        let right_emergency = ShiftTrajectory::new(
+            emergency_shift,
+            spin.generate(right_angle).chain(ShiftTrajectory::new(
+                Pose {
+                    theta: right_angle,
+                    ..Default::default()
+                },
+                init_raw.clone(),
+            )),
+        );
+        let left_emergency = ShiftTrajectory::new(
+            emergency_shift,
+            spin.generate(left_angle).chain(ShiftTrajectory::new(
+                Pose {
+                    theta: left_angle,
+                    ..Default::default()
+                },
+                init_raw.clone(),
+            )),
+        );
+        let back_emergency = ShiftTrajectory::new(
+            emergency_shift,
+            spin.generate(back_angle).chain(ShiftTrajectory::new(
+                Pose {
+                    theta: back_angle,
+                    ..Default::default()
+                },
+                init_raw,
+            )),
+        );
         let mut trajectories = Deque::new();
         trajectories.push_back(init).ok();
         Self {
@@ -301,7 +341,11 @@ impl SearchTrajectoryManager {
             right,
             back_before,
             back_after,
-            emergency,
+            front_emergency,
+            right_emergency,
+            left_emergency,
+            back_emergency,
+            state: SearchManagerState::Normal,
         }
     }
 
@@ -330,8 +374,8 @@ impl SearchTrajectoryManager {
     fn set(&mut self, pose: Pose, kind: SearchTrajectoryKind) {
         use SearchTrajectoryKind::*;
 
-        self.trajectories
-            .push_back(match kind {
+        let trajectory = match self.state {
+            SearchManagerState::Normal => match kind {
                 Front => Trajectory::Straight(ShiftTrajectory::new(pose, self.front.clone())),
                 Right => Trajectory::Slalom(ShiftTrajectory::new(pose, self.right.clone())),
                 Left => Trajectory::Slalom(ShiftTrajectory::new(pose, self.left.clone())),
@@ -340,15 +384,33 @@ impl SearchTrajectoryManager {
                     before: ShiftTrajectory::new(pose, self.back_before.clone()),
                     after: ShiftTrajectory::new(pose, self.back_after.clone()),
                 },
-            })
-            .ok();
+            },
+            SearchManagerState::Emergency => match kind {
+                Front => Trajectory::Straight(self.front_emergency.clone()),
+                Right => Trajectory::EmergencyRecovery(ShiftTrajectory::new(
+                    pose,
+                    self.right_emergency.clone(),
+                )),
+                Left => Trajectory::EmergencyRecovery(ShiftTrajectory::new(
+                    pose,
+                    self.left_emergency.clone(),
+                )),
+                Back => Trajectory::EmergencyRecovery(ShiftTrajectory::new(
+                    pose,
+                    self.back_emergency.clone(),
+                )),
+            },
+        };
+        self.trajectories.push_back(trajectory).ok();
+        self.state = SearchManagerState::Normal;
     }
 
     fn set_emergency(&mut self, pose: Pose) {
+        self.state = SearchManagerState::Emergency;
         self.trajectories
-            .push_back(Trajectory::Emergency(ShiftTrajectory::new(
+            .push_back(Trajectory::Straight(ShiftTrajectory::new(
                 pose,
-                self.emergency.clone(),
+                self.fin.clone().unwrap(),
             )))
             .ok();
     }
