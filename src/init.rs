@@ -381,7 +381,7 @@ impl Bag {
             .trans_params(ControlParameters {
                 kp: 4.8497,
                 ki: 29.5783,
-                kd: 0.0,
+                kd: 0.005,
                 model_k: 1.865,
                 model_t1: 0.4443,
             })
@@ -404,7 +404,7 @@ impl Bag {
             .search_velocity(Velocity::new::<meter_per_second>(0.35))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
             .v_max(Velocity::new::<meter_per_second>(2.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(4.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(30.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(200.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
@@ -767,6 +767,7 @@ impl Operator {
                 let start = self.manager.last_node().unwrap();
                 self.init_run(start, |node| goal == *node);
                 self.mode = Mode::Return { run_number };
+                self.controller.reset();
                 tick_on();
             }
             _ => unreachable!(),
@@ -798,6 +799,7 @@ impl Operator {
             } else {
                 Mode::Idle(IdleMode::Nop)
             };
+            self.controller.reset();
             tick_on();
         }
     }
@@ -826,7 +828,7 @@ impl Operator {
         let vol = self.controller.control(&control_target, &control_state);
 
         const THRES: ElectricPotential = ElectricPotential {
-            value: 15.0,
+            value: 40.0,
             dimension: PhantomData,
             units: PhantomData,
         };

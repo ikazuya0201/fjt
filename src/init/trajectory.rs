@@ -505,9 +505,9 @@ impl RunTrajectoryManager {
             let (start, middle, end) = if i <= 1 {
                 (velocity, self.run_slalom_velocity, self.run_slalom_velocity)
             } else if i + 2 == self.path.len() {
-                (velocity, velocity * 0.666_666_7, Default::default())
+                (velocity, velocity * 0.5, Default::default())
             } else if i + 3 == self.path.len() {
-                (velocity, velocity * 0.5, velocity * 0.5)
+                (velocity, velocity * 0.3, velocity * 0.3)
             } else {
                 (
                     self.run_slalom_velocity,
