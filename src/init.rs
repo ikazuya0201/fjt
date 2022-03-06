@@ -4,11 +4,11 @@ mod types;
 use core::{
     fmt::Write,
     marker::PhantomData,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use cortex_m::interrupt::free;
-use heapless::Vec;
+use heapless::{Deque, Vec};
 #[allow(unused_imports)]
 use micromath::F32Ext;
 use mousecore2::{
@@ -151,17 +151,18 @@ impl Default for Linear {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+struct TofData<T> {
+    front: T,
+    right: T,
+    left: T,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum TofPosition {
     Front,
     Right,
     Left,
-}
-
-struct TofConfigs {
-    front: (Pose, Linear),
-    right: (Pose, Linear),
-    left: (Pose, Linear),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -227,8 +228,9 @@ pub struct Bag {
     state: Mutex<SearchState<W>>,
     pub commander: Mutex<Option<Commander<W>>>,
     is_search_finish: AtomicBool,
-    tof_queue: Mutex<Vec<(Length, TofPosition), 3>>,
+    tof_queue: Mutex<Vec<(Length, TofPosition, u32), 3>>,
     voltage: Mutex<ElectricPotential>,
+    clock: AtomicU32,
 }
 
 impl Bag {
@@ -454,7 +456,7 @@ impl Bag {
                 right_encoder,
                 left_motor,
                 right_motor,
-                tof_configs: TofConfigs {
+                tof_configs: TofData {
                     left: (
                         Pose {
                             x: Length::new::<meter>(0.013),
@@ -501,6 +503,7 @@ impl Bag {
 
                 ident_data: Vec::new(),
                 flash: LockedFlash::new(FLASH),
+                past_states: Deque::new(),
             }),
             pollar: Mutex::new(Pollar {
                 i2c,
@@ -509,6 +512,7 @@ impl Bag {
                     right: tof_right,
                     left: tof_left,
                 },
+                clock: Default::default(),
                 timer: sensor_timer,
                 voltmeter,
             }),
@@ -521,6 +525,7 @@ impl Bag {
             is_search_finish: AtomicBool::new(false),
             tof_queue: Mutex::new(Vec::new()),
             voltage: Mutex::new(voltage),
+            clock: AtomicU32::new(0),
         }
     }
 }
@@ -545,7 +550,7 @@ pub struct Operator {
     right_encoder: RightEncoder,
     left_motor: LeftMotor,
     right_motor: RightMotor,
-    tof_configs: TofConfigs,
+    tof_configs: TofData<(Pose, Linear)>,
     voltage: ElectricPotential,
 
     manager: TrajectoryManager,
@@ -561,9 +566,19 @@ pub struct Operator {
     #[allow(unused)]
     ident_data: Vec<f32, 2_000>,
     flash: LockedFlash,
+
+    past_states: Deque<State, 100>,
 }
 
 impl Operator {
+    fn tick_off_routine(&mut self) {
+        self.stop();
+        tick_off();
+        self.past_states.clear();
+        BAG.clock.store(0, Ordering::SeqCst);
+        self.controller.reset();
+    }
+
     fn load_walls_from_flash(&self) -> Walls<W> {
         let bytes = self.flash.read();
         let offset = 16 * 1024;
@@ -577,6 +592,7 @@ impl Operator {
     }
 
     pub fn control(&mut self) {
+        BAG.clock.fetch_add(1, Ordering::SeqCst);
         match self.mode {
             Mode::Idle(mode) => self.control_idle(mode),
             Mode::Search { run_number } => self.control_search(run_number),
@@ -597,9 +613,7 @@ impl Operator {
             .apply(ElectricPotential::new::<volt>(0.3), voltage);
         self.estimate();
         if self.ident_data.push(self.state.theta.v.value).is_err() {
-            tick_off();
-            self.left_motor.apply(Default::default(), voltage);
-            self.right_motor.apply(Default::default(), voltage);
+            self.tick_off_routine();
             let mut out = jlink_rtt::Output::new();
             for &v in &self.ident_data {
                 writeln!(out, "{}", v).ok();
@@ -621,9 +635,7 @@ impl Operator {
         let state = &self.state;
         let v = state.x.v * state.theta.x.value.cos() + state.y.v * state.theta.x.value.sin();
         if self.ident_data.push(v.value).is_err() {
-            tick_off();
-            self.left_motor.apply(Default::default(), voltage);
-            self.right_motor.apply(Default::default(), voltage);
+            self.tick_off_routine();
             let mut out = jlink_rtt::Output::new();
             for &v in &self.ident_data {
                 writeln!(out, "{}", v).ok();
@@ -675,7 +687,7 @@ impl Operator {
     fn control_select(&mut self) {
         let mode = self.selector.mode();
         if self.is_switch_on() {
-            tick_off();
+            self.tick_off_routine();
             while !self.is_switch_off() {
                 block!(self.control_timer.wait()).unwrap();
             }
@@ -700,7 +712,7 @@ impl Operator {
 
     fn control_idle(&mut self, mode: IdleMode) {
         if self.is_switch_on() {
-            tick_off();
+            self.tick_off_routine();
             // wait until switch off
             while !self.is_switch_off() {
                 block!(self.control_timer.wait()).unwrap();
@@ -710,9 +722,9 @@ impl Operator {
             return;
         }
         if let Some(mut que) = BAG.tof_queue.try_lock() {
-            while let Some((distance, pos)) = que.pop() {
+            while let Some((distance, pos, _)) = que.pop() {
                 if pos == TofPosition::Right && distance < START_LENGTH {
-                    tick_off();
+                    self.tick_off_routine();
                     self.reset_state();
                     self.mode = match mode {
                         IdleMode::Nop => self.mode,
@@ -761,13 +773,11 @@ impl Operator {
             None => {
                 use RunPosture::*;
 
-                self.stop();
-                tick_off();
+                self.tick_off_routine();
                 let goal = Node::new(0, 0, South).unwrap();
                 let start = self.manager.last_node().unwrap();
                 self.init_run(start, |node| goal == *node);
                 self.mode = Mode::Return { run_number };
-                self.controller.reset();
                 tick_on();
             }
             _ => unreachable!(),
@@ -785,8 +795,7 @@ impl Operator {
         } else {
             use RunPosture::*;
 
-            self.stop();
-            tick_off();
+            self.tick_off_routine();
             let goals =
                 [(2, 0, South), (2, 0, West)].map(|(x, y, pos)| Node::new(x, y, pos).unwrap());
             self.init_run(Node::new(0, 0, South).unwrap(), |node| {
@@ -799,7 +808,6 @@ impl Operator {
             } else {
                 Mode::Idle(IdleMode::Nop)
             };
-            self.controller.reset();
             tick_on();
         }
     }
@@ -818,6 +826,10 @@ impl Operator {
             }
         };
         self.estimator.estimate(&mut self.state, &sensor_value);
+        if self.past_states.is_full() {
+            self.past_states.pop_back();
+        }
+        self.past_states.push_front(self.state.clone()).unwrap();
         self.stddev += Length::new::<millimeter>(0.005);
     }
 
@@ -849,18 +861,28 @@ impl Operator {
     fn detect_and_correct(&mut self) {
         match (BAG.tof_queue.try_lock(), BAG.walls.try_lock()) {
             (Some(mut que), Some(mut walls)) => {
-                let cos_th = self.state.theta.x.value.cos();
-                let sin_th = self.state.theta.x.value.sin();
-                while let Some((distance, pos)) = que.pop() {
+                let current_clock = BAG.clock.load(Ordering::SeqCst);
+                while let Some((distance, pos, clock)) = que.pop() {
+                    if current_clock < clock {
+                        continue;
+                    }
+                    let diff = (current_clock - clock) as usize;
                     let config = match pos {
                         TofPosition::Front => &self.tof_configs.front,
                         TofPosition::Right => &self.tof_configs.right,
                         TofPosition::Left => &self.tof_configs.left,
                     };
                     let distance = config.1.slope * distance + config.1.intercept;
+                    let state = if let Some(state) = self.past_states.iter().nth(diff) {
+                        state
+                    } else {
+                        return;
+                    };
+                    let cos_th = state.theta.x.value.cos();
+                    let sin_th = state.theta.x.value.sin();
                     let pose = Pose {
-                        x: self.state.x.x + config.0.x * cos_th - config.0.y * sin_th,
-                        y: self.state.y.x + config.0.x * sin_th + config.0.y * cos_th,
+                        x: state.x.x + config.0.x * cos_th - config.0.y * sin_th,
+                        y: state.y.x + config.0.x * sin_th + config.0.y * cos_th,
                         theta: self.state.theta.x + config.0.theta,
                     };
 
@@ -907,8 +929,7 @@ impl Operator {
             match command {
                 Command::Track(target) => self.track(&target),
                 Command::Operation => {
-                    tick_off();
-                    self.stop();
+                    self.tick_off_routine();
                     self.store_walls_to_flash(&*BAG.walls.lock());
                     tick_on();
                 }
@@ -934,8 +955,7 @@ impl Operator {
                     _ => unreachable!(),
                 }
             } else {
-                self.stop();
-                tick_off();
+                self.tick_off_routine();
                 let rev_start = Node::new(0, 0, RunPosture::South).unwrap();
                 let state = BAG.state.lock();
                 let x = state.x();
@@ -1056,6 +1076,7 @@ impl Operator {
 pub struct Pollar {
     i2c: I2c,
     tofs: Tofs,
+    clock: TofData<u32>,
     timer: SensorTimer,
     voltmeter: Voltmeter,
 }
@@ -1064,8 +1085,16 @@ impl Pollar {
     pub fn poll(&mut self) {
         macro_rules! poll {
             ($field: ident, $pos: expr) => {
-                if let Ok(distance) = self.tofs.$field.distance(&mut self.i2c) {
-                    BAG.tof_queue.lock().push((distance, $pos)).ok();
+                if self.tofs.$field.is_polling_requested() {
+                    if let Ok(distance) = self.tofs.$field.distance(&mut self.i2c) {
+                        BAG.tof_queue
+                            .lock()
+                            .push((distance, $pos, self.clock.$field))
+                            .ok();
+                    }
+                } else {
+                    block!(self.tofs.$field.request_polling(&mut self.i2c)).unwrap();
+                    self.clock.$field = BAG.clock.load(Ordering::SeqCst);
                 }
             };
         }
