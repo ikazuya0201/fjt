@@ -370,7 +370,7 @@ impl Bag {
             .build();
         let navigator = NavigationController::builder()
             .gain(120.0)
-            .dgain(35.0)
+            .dgain(50.0)
             .build();
         let supervisor = SupervisoryController::builder()
             .avoidance_distance(Length::new::<millimeter>(25.0))
@@ -396,16 +396,16 @@ impl Bag {
             .build();
         let estimator = Estimator::builder()
             .period(period)
-            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(50.0))
+            .slip_angle_const(Acceleration::new::<meter_per_second_squared>(80.0))
             .build();
         let detector = WallDetector::<W>::default();
 
         let manager = TrajectoryConfig::builder()
-            .search_velocity(Velocity::new::<meter_per_second>(0.3))
-            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.3))
-            .v_max(Velocity::new::<meter_per_second>(1.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(2.0))
-            .j_max(Jerk::new::<meter_per_second_cubed>(50.0))
+            .search_velocity(Velocity::new::<meter_per_second>(0.35))
+            .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
+            .v_max(Velocity::new::<meter_per_second>(2.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(4.0))
+            .j_max(Jerk::new::<meter_per_second_cubed>(200.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
                 14400.0,
@@ -826,7 +826,7 @@ impl Operator {
         let vol = self.controller.control(&control_target, &control_state);
 
         const THRES: ElectricPotential = ElectricPotential {
-            value: 7.0,
+            value: 15.0,
             dimension: PhantomData,
             units: PhantomData,
         };
