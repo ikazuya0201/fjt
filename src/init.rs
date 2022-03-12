@@ -106,6 +106,13 @@ static INIT_STATE: Lazy<State> = Lazy::new(|| State {
         ..Default::default()
     },
 });
+static RUN_GOALS: Lazy<[Node<W>; 4]> = Lazy::new(|| {
+    use RunPosture::*;
+    [(2, 0, South), (2, 0, North), (2, 0, East), (2, 0, West)]
+        .map(|(x, y, pos)| Node::new(x, y, pos).unwrap())
+});
+static SEARCH_GOALS: Lazy<[Coordinate<W>; 2]> =
+    Lazy::new(|| [(3, 0), (2, 1)].map(|(x, y)| Coordinate::new(x, y).unwrap()));
 
 pub static BAG: Lazy<Bag> = Lazy::new(|| Bag::new());
 
@@ -403,10 +410,10 @@ impl Bag {
         let detector = WallDetector::<W>::default();
 
         let manager = TrajectoryConfig::builder()
-            .search_velocity(Velocity::new::<meter_per_second>(0.35))
+            .search_velocity(Velocity::new::<meter_per_second>(0.4))
             .run_slalom_velocity(Velocity::new::<meter_per_second>(0.6))
             .v_max(Velocity::new::<meter_per_second>(2.0))
-            .a_max(Acceleration::new::<meter_per_second_squared>(10.0))
+            .a_max(Acceleration::new::<meter_per_second_squared>(4.0))
             .j_max(Jerk::new::<meter_per_second_cubed>(200.0))
             .spin_v_max(AngularVelocity::new::<degree_per_second>(1440.0))
             .spin_a_max(AngularAcceleration::new::<degree_per_second_squared>(
@@ -738,10 +745,8 @@ impl Operator {
 
                             *BAG.walls.lock() = self.load_walls_from_flash();
                             BAG.is_search_finish.store(true, Ordering::SeqCst);
-                            let goals = [(2, 0, South), (2, 0, West)]
-                                .map(|(x, y, pos)| Node::new(x, y, pos).unwrap());
                             self.init_run(Node::new(0, 0, North).unwrap(), |node| {
-                                goals.iter().any(|goal| node == goal)
+                                RUN_GOALS.iter().any(|goal| node == goal)
                             });
                             Mode::Run { run_number: 0 }
                         }
@@ -796,10 +801,8 @@ impl Operator {
             use RunPosture::*;
 
             self.tick_off_routine();
-            let goals =
-                [(2, 0, South), (2, 0, West)].map(|(x, y, pos)| Node::new(x, y, pos).unwrap());
             self.init_run(Node::new(0, 0, South).unwrap(), |node| {
-                goals.iter().any(|goal| node == goal)
+                RUN_GOALS.iter().any(|goal| node == goal)
             });
             self.mode = if run_number > 0 {
                 Mode::Run {
@@ -1124,13 +1127,7 @@ pub struct Solver {
 impl Solver {
     pub fn new() -> Self {
         Self {
-            searcher: Searcher::new(
-                Coordinate::new(0, 1).unwrap(),
-                &[
-                    Coordinate::new(2, 1).unwrap(),
-                    Coordinate::new(3, 0).unwrap(),
-                ],
-            ),
+            searcher: Searcher::new(Coordinate::new(0, 1).unwrap(), &*SEARCH_GOALS),
         }
     }
 
