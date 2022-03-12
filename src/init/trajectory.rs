@@ -50,6 +50,7 @@ enum Trajectory {
         after: ShiftTrajectory<BackAfterTrajectory>,
     },
     Stop(StopTrajectory),
+    ShiftStop(ShiftTrajectory<StopTrajectory>),
     Setup(ShiftTrajectory<SetupTrajectory>),
     EmergencyRecovery(ShiftTrajectory<EmergencyRecoveryTrajectory>),
 }
@@ -87,6 +88,7 @@ impl Iterator for Trajectory {
                 BackState::After => after.next().map(Command::Track),
             },
             Stop(inner) => inner.next().map(Command::Track),
+            ShiftStop(inner) => inner.next().map(Command::Track),
             Setup(inner) => inner.next().map(Command::Track),
             EmergencyRecovery(inner) => inner.next().map(Command::Track),
         }
@@ -184,6 +186,7 @@ enum ManagerState {
     Run(RunTrajectoryManager),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchManagerState {
     Normal,
     Emergency,
@@ -203,6 +206,7 @@ struct SearchTrajectoryManager {
     right_emergency: EmergencyRecoveryTrajectory,
     left_emergency: EmergencyRecoveryTrajectory,
     back_emergency: EmergencyRecoveryTrajectory,
+    emergency_stop: StopTrajectory,
 
     state: SearchManagerState,
 }
@@ -331,6 +335,14 @@ impl SearchTrajectoryManager {
                 init_raw,
             )),
         );
+        let emergency_stop = StopTrajectory::new(
+            Pose {
+                x: square_width_half - front_offset,
+                ..Default::default()
+            },
+            period,
+            Time::new::<second>(0.2),
+        );
         let mut trajectories = Deque::new();
         trajectories.push_back(init).ok();
         Self {
@@ -345,6 +357,7 @@ impl SearchTrajectoryManager {
             right_emergency,
             left_emergency,
             back_emergency,
+            emergency_stop,
             state: SearchManagerState::Normal,
         }
     }
@@ -406,13 +419,22 @@ impl SearchTrajectoryManager {
     }
 
     fn set_emergency(&mut self, pose: Pose) {
-        self.state = SearchManagerState::Emergency;
-        self.trajectories
-            .push_back(Trajectory::Straight(ShiftTrajectory::new(
-                pose,
-                self.fin.clone().unwrap(),
-            )))
-            .ok();
+        if self.state == SearchManagerState::Emergency {
+            self.trajectories
+                .push_back(Trajectory::ShiftStop(ShiftTrajectory::new(
+                    pose,
+                    self.emergency_stop.clone(),
+                )))
+                .ok();
+        } else {
+            self.state = SearchManagerState::Emergency;
+            self.trajectories
+                .push_back(Trajectory::Straight(ShiftTrajectory::new(
+                    pose,
+                    self.fin.clone().unwrap(),
+                )))
+                .ok();
+        }
     }
 }
 
